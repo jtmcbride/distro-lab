@@ -44,9 +44,14 @@ scenario on failure.
 | 3   | Network: directed links, latency/jitter/loss/duplication, partition/heal actions, `docs/semantics.md`                                                       | Unit tests per fault and in-flight edge case                            | done   |
 | 4   | Protocol interface + Raft election: roles, RequestVote, heartbeat AppendEntries, persistent `currentTerm`/`votedFor`                                        | Elects a leader; re-elects after crash; minority partition never elects | done   |
 | 5   | Invariants: election safety, single vote per term, term monotonicity, persisted-state durability                                                            | Checked after every event via `getNodeView()` only                      | done   |
-| 6   | Chaos runner: fast-check fault schedules, per-seed runs, bounded liveness, failure → scenario JSON                                                          | 10k seeds × ~5k events, zero violations                                 |        |
-| 7   | Planted-bug variants (double vote, lost `votedFor` on restart, …)                                                                                           | Each caught within N seeds                                              |        |
-| 8   | CLI: `sim run scenario.json`, `sim fuzz --seeds N`                                                                                                          | Failing scenario reproduces from the file alone                         |        |
+| 6   | Chaos runner: fast-check fault schedules, per-seed runs, bounded liveness, failure → scenario JSON                                                          | 10k seeds × ~5k events, zero violations                                 | done   |
+| 7   | Planted-bug variants (double vote, lost `votedFor` on restart, …)                                                                                           | Each caught within N seeds                                              | done   |
+| 8   | CLI: `sim run scenario.json`, `sim fuzz --seeds N`                                                                                                          | Failing scenario reproduces from the file alone                         | done   |
+
+**Phase 1 result:** 10,000 generated fault scenarios (20.1M events, ~2k per run rather than
+the planned ~5k) with zero safety or liveness failures; all three planted bugs are caught
+within 15 seeds and shrunk to small scenarios. A placeholder web app and GitHub Pages
+deployment were added ahead of phase 3.
 
 Out of scope for phase 1: log replication, KV store, UI, Web Worker, snapshots/time travel,
 custom shrinking (fast-check's shrinking covers the basics).
