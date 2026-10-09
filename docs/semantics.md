@@ -8,9 +8,10 @@ meaningful relative to them, so changes here are breaking changes.
 - Time is virtual (milliseconds, may be fractional). Nothing reads wall-clock time.
 - Events run in `(time, insertion sequence)` order. Two events at the same instant run in
   the order they were scheduled; there is no hidden concurrency.
-- Scenario actions given at construction are scheduled before any protocol events, so an
-  action at time `t` runs before protocol events also at `t` (except node `init`, which runs
-  during construction at time 0).
+- Scenario actions run before protocol events scheduled for the same instant (except node
+  `init`, which runs during construction at time 0). This holds however the action was
+  added, so a live session and its replay order events identically. Live actions are
+  stamped 1µs after the last processed instant.
 
 ## Handlers
 

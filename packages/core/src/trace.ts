@@ -21,6 +21,8 @@ export type TraceRecord =
       readonly message: CanonicalValue;
       /** Number of copies the network scheduled (0 = dropped at send, see the drop record). */
       readonly copies: number;
+      /** When each copy is due to arrive (it may still be dropped then, e.g. link cut). */
+      readonly arrivals: readonly number[];
     })
   | (Base & {
       readonly type: "deliver";

@@ -95,10 +95,41 @@ bug: AppendEntries follow-ups on duplicated responses caused unbounded message g
 Out of scope: snapshots/compaction, membership changes, ReadIndex/lease reads, full
 linearizability checking (stretch: bounded checker for ~10-operation histories).
 
+## Phase 3 — Interactive UI
+
+Goal: in the browser, load or generate a scenario, play it at any speed, inject faults and
+client operations live, watch messages move, inspect any node, and ask "why did this
+happen?" for any event. Every interaction is recorded into the scenario, so a session
+exports and replays exactly.
+
+Design decisions:
+
+- **Simulation in a Web Worker** behind a platform-independent `SimulationHost` (tested in
+  Vitest). It posts one batched frame per animation frame: process states plus new records.
+- **Live actions are scheduled actions.** Actions sort ahead of protocol events at equal
+  times and live ones are stamped 1µs after the last processed instant, so a live session
+  and its replay order every event identically.
+- **Seek by replaying from zero** (cheap at these sizes); snapshots and branching are phase 4.
+- **Animation follows the schedule**: send records carry each copy's arrival time; drops are
+  shown only when the drop record exists.
+- **Custom SVG cluster view**, **Canvas space-time diagram**, Zustand store, virtualized lists.
+
+| #   | Work                                                                                                                                                        | Exit criterion                                                                  | Status |
+| --- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- | ------ |
+| 1   | Engine: arrival times on sends, timer queries, next-event time, action priority. `SimulationHost`: play/speed/step/step-to-notable/seek/live actions/frames | Live actions export and replay to the same trace hash; seek matches a fresh run | done   |
+| 2   | Worker + typed protocol + Zustand store + playback bar (play, pause, speed, step, scrubber, clock)                                                          | 5-node Raft at 60fps on 10x with a responsive UI                                |        |
+| 3   | Cluster view (SVG): circular draggable layout, role/up/term, links, partitions, animated messages and drops, click to crash/recover                         | An election, crash and re-election visibly match the trace                      |        |
+| 4   | Node inspector + log grid: role, term, vote, commit/applied, election timer countdown, KV data, sessions; cross-node log grid                               | Figure 8 visibly reproduces stages (a)–(d)                                      |        |
+| 5   | Space-time diagram (Canvas): lifelines, message arrows, follows playhead, zoom/pan, click a message for payload and outcome                                 | Any arrow shows its payload and deliver/drop record                             |        |
+| 6   | Event list + causal chains: virtualized, filterable; selecting an event highlights its causes across all views                                              | "B becameLeader" shows timeout → RequestVotes → grants                          |        |
+| 7   | Fault and client tools: link editor, partition builder, network degradation, client panel (get/put/cas, pending requests)                                   | Every fault in docs/semantics.md is reachable from the UI                       |        |
+| 8   | Scenarios and violations: examples, generate from seed, import/export JSON, share by URL, violation panel with jump-to                                      | A `sim fuzz` failure file opens in the UI at its violation                      |        |
+| 9   | Hardening: Playwright e2e in CI, performance check, phone-width layout, Pages deploy                                                                        | CI runs e2e; the live site works                                                |        |
+
+Out of scope: snapshots, branching what-if comparisons, minimization in the UI (phase 4).
+
 ## Later phases
 
-3. UI: React Flow topology, space-time diagram (custom Canvas/SVG), node inspector, log
-   viewer; simulation in a Web Worker, snapshots posted at frame rate.
 4. Time travel: periodic snapshots, replay, branching what-if runs, causal explanations.
 5. Eventual-consistency protocol (Dynamo-style), then vector clocks/CRDTs.
 6. Linearizability checking (Porcupine-style) for the KV store; docs, tutorials, GitHub Pages.

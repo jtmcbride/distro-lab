@@ -73,8 +73,8 @@ interface NodeRuntime<M, C> {
   /** Bumped on every crash; identifies which process a timer belongs to. */
   incarnation: number;
   state: NodeState<unknown, unknown>;
-  /** Armed timers: key -> timerId of the firing that is still valid. */
-  readonly timers: Map<string, number>;
+  /** Armed timers: key -> the firing that is still valid. */
+  readonly timers: Map<string, { readonly id: number; readonly at: number }>;
 }
 
 type Effect<M> =
@@ -91,6 +91,14 @@ type Effect<M> =
 type Emit = (record: DistributiveOmit<TraceRecord, "id">) => number;
 type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
 
+/**
+ * Queue priorities at equal times: scenario actions run before protocol events. A replay
+ * queues every action up front while a live run adds them later, so without this the two
+ * would order an action differently relative to protocol events at the same instant.
+ */
+const ACTION = 0;
+const PROTOCOL = 1;
+
 /** `now + delay`, rounded to microseconds so float noise never leaks into traces. */
 function at(now: number, delayMs: number): number {
   return Math.round((now + delayMs) * 1000) / 1000;
@@ -100,7 +108,17 @@ function at(now: number, delayMs: number): number {
 export interface RunnableSimulation extends Observable {
   readonly eventCount: number;
   readonly clientIds: readonly NodeId[];
+  readonly nextEventTime: number | undefined;
+  roleOf(id: NodeId): ProcessRole;
+  timers(node: NodeId): { key: string; at: number }[];
+  step(): boolean;
   runUntil(timeMs: number): void;
+  // Harnesses handle actions as plain JSON whose command/change types depend on the
+  // protocol, which this protocol-agnostic interface cannot name.
+  /* eslint-disable @typescript-eslint/no-explicit-any */
+  schedule(atMs: number, action: Action<any, any>): void;
+  actions(): readonly ScheduledAction<any, any>[];
+  /* eslint-enable @typescript-eslint/no-explicit-any */
 }
 
 /**
@@ -241,6 +259,16 @@ export class Simulation<
     return this.runtime(node).incarnation;
   }
 
+  /** Armed timers of a process and when they fire (empty while it is down). */
+  timers(node: NodeId): { key: string; at: number }[] {
+    return [...this.runtime(node).timers].map(([key, t]) => ({ key, at: t.at }));
+  }
+
+  /** Time of the next scheduled event, if any. */
+  get nextEventTime(): number | undefined {
+    return this.queue.peek()?.timeMs;
+  }
+
   /** Protocol view of a process (crashed ones report their last state's view). */
   view(node: NodeId): CanonicalValue {
     const r = this.runtime(node);
@@ -257,7 +285,7 @@ export class Simulation<
     // cannot mutate it later.
     const stored = JSON.parse(canonicalJson(action)) as Action<C, N>;
     this.actionLog.push({ atMs, action: stored });
-    this.queue.push(atMs, { kind: "action", action: stored });
+    this.queue.push(atMs, { kind: "action", action: stored }, ACTION);
   }
 
   /** Everything needed to replay this run with the same protocol and network setup. */
@@ -388,7 +416,7 @@ export class Simulation<
   private fireTimer(node: NodeId, key: string, timerId: number, cause: number): void {
     const r = this.runtime(node);
     // Stale: cancelled, re-armed, or armed by a process that has since crashed.
-    if (!r.up || r.timers.get(key) !== timerId) return;
+    if (!r.up || r.timers.get(key)?.id !== timerId) return;
     r.timers.delete(key);
     const id = this.emit({ type: "timer", t: this.clock, cause, node, key });
     this.invoke(r, id, (ctx) => {
@@ -435,6 +463,10 @@ export class Simulation<
           const wire = canonicalJson(e.message);
           const outcome = this.network.onSend(r.id, e.to, t, this.netRng);
           const delays = "delays" in outcome ? outcome.delays : [];
+          for (const d of delays) {
+            if (!Number.isFinite(d) || d < 0) throw new RangeError(`network returned delay ${d}`);
+          }
+          const arrivals = delays.map((d) => at(t, d));
           const send = this.emit({
             type: "send",
             t,
@@ -443,6 +475,7 @@ export class Simulation<
             to: e.to,
             message: JSON.parse(wire) as CanonicalValue,
             copies: delays.length,
+            arrivals,
           });
           if ("dropped" in outcome) {
             this.emit({
@@ -455,22 +488,23 @@ export class Simulation<
               reason: outcome.dropped,
             });
           }
-          for (const d of delays) {
-            if (!Number.isFinite(d) || d < 0) throw new RangeError(`network returned delay ${d}`);
-            this.queue.push(at(t, d), { kind: "deliver", from: r.id, to: e.to, wire, send });
+          for (const arrival of arrivals) {
+            this.queue.push(
+              arrival,
+              { kind: "deliver", from: r.id, to: e.to, wire, send },
+              PROTOCOL,
+            );
           }
           break;
         }
         case "setTimer": {
           const timerId = this.nextTimerId++;
-          r.timers.set(e.key, timerId);
-          this.queue.push(at(t, e.delayMs), {
-            kind: "timer",
-            node: r.id,
-            key: e.key,
-            timerId,
-            cause,
-          });
+          r.timers.set(e.key, { id: timerId, at: at(t, e.delayMs) });
+          this.queue.push(
+            at(t, e.delayMs),
+            { kind: "timer", node: r.id, key: e.key, timerId, cause },
+            PROTOCOL,
+          );
           break;
         }
         case "cancelTimer":

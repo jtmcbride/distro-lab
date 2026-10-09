@@ -3,7 +3,7 @@ import { InvariantMonitor, type Invariant, type Violation } from "../invariants.
 import { LinkNetwork, type LinkNetworkConfig, type NetworkChange } from "../linkNetwork.ts";
 import type { NodeId, Protocol } from "../protocol.ts";
 import { Simulation, type RunnableSimulation, type ScheduledAction } from "../simulation.ts";
-import { TraceRecorder, type TraceRecord } from "../trace.ts";
+import { TraceRecorder, type TraceRecord, type TraceSink } from "../trace.ts";
 import type { Workload } from "./generate.ts";
 import type { Rng } from "../rng.ts";
 
@@ -48,7 +48,10 @@ export interface ProtocolEntry {
   /** Hand-written scenarios by name, e.g. "figure8". */
   readonly examples?: Readonly<Record<string, (protocol: string) => Scenario>>;
   /** Builds a simulation for the scenario with its invariants attached. */
-  build(scenario: Scenario): {
+  build(
+    scenario: Scenario,
+    options?: { readonly sinks?: readonly TraceSink[] },
+  ): {
     sim: RunnableSimulation;
     monitor: InvariantMonitor<unknown>;
     /** Problems with progress right now; empty if the cluster is in a good state. */
@@ -80,7 +83,7 @@ export function defineProtocol<P, V, M, C, View, CP = never, CV = never>(spec: {
       ? {}
       : { formatView: spec.formatView as (view: CanonicalValue) => string }),
     ...(spec.examples === undefined ? {} : { examples: spec.examples }),
-    build(scenario) {
+    build(scenario, options) {
       const clients = scenario.clients ?? [];
       if (clients.length > 0 && spec.client === undefined) {
         throw new Error(`protocol "${spec.name}" has no client process`);
@@ -94,6 +97,7 @@ export function defineProtocol<P, V, M, C, View, CP = never, CV = never>(spec: {
         seed: scenario.seed,
         network: new LinkNetwork([...scenario.nodes, ...clients], scenario.network),
         actions: scenario.actions as readonly ScheduledAction<C, NetworkChange>[],
+        sinks: options?.sinks ?? [],
       });
       const monitor = new InvariantMonitor<View>(sim, spec.invariants());
       return {
@@ -145,9 +149,9 @@ export function runScenario(
   }
   const entry = registry.get(scenario.protocol);
   if (entry === undefined) throw new Error(`unknown protocol "${scenario.protocol}"`);
-  const { sim, monitor, liveness } = entry.build(scenario);
+  // The recorder is attached at construction so the trace includes node init records.
   const rec = new TraceRecorder(options.keepTrace ?? false);
-  sim.addSink(rec.sink);
+  const { sim, monitor, liveness } = entry.build(scenario, { sinks: [rec.sink] });
 
   // Liveness: once faults are lifted, the protocol must reach a good state at some point in
   // the window. A single end-of-run sample would flag legitimate transient states, such as an
