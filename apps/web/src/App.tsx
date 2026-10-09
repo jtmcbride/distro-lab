@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { ClusterView } from "./components/ClusterView.tsx";
 import { PlaybackBar } from "./components/PlaybackBar.tsx";
 import { SCENARIO_CHOICES } from "./scenarios.ts";
 import { sim } from "./sim/client.ts";
@@ -7,7 +8,7 @@ import { trace } from "./state/trace.ts";
 
 export function App() {
   const [choice, setChoice] = useState(SCENARIO_CHOICES[0]!.id);
-  const { processes, violations, error } = useSim();
+  const { violations, error } = useSim();
   useSim((s) => s.traceVersion); // re-render as the trace grows
 
   useEffect(() => {
@@ -35,14 +36,7 @@ export function App() {
       <main className="workspace">
         <section className="panel cluster" aria-label="Cluster">
           <h2>Cluster</h2>
-          <ul className="process-list">
-            {processes.map((p) => (
-              <li key={p.id} className={p.up ? "" : "down"}>
-                <strong>{p.id}</strong> {p.up ? "" : "(down) "}
-                <code>{JSON.stringify(p.view).slice(0, 120)}</code>
-              </li>
-            ))}
-          </ul>
+          <ClusterView />
         </section>
         <section className="panel inspector" aria-label="Inspector">
           <h2>Inspector</h2>

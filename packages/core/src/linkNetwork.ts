@@ -24,6 +24,20 @@ export const DEFAULT_LINK: LinkConfig = {
   up: true,
 };
 
+export type LinkView = {
+  readonly from: NodeId;
+  readonly to: NodeId;
+  readonly latencyMs: number;
+  readonly jitterMs: number;
+  readonly loss: number;
+  readonly duplicate: number;
+  readonly up: boolean;
+  /** Up and not blocked by a partition or isolation. */
+  readonly connected: boolean;
+};
+
+export type LinkNetworkView = { readonly links: readonly LinkView[] };
+
 export interface LinkOverride extends Partial<LinkConfig> {
   readonly from: NodeId;
   readonly to: NodeId;
@@ -120,6 +134,16 @@ export class LinkNetwork implements Network<NetworkChange> {
 
   canDeliver(from: NodeId, to: NodeId): boolean {
     return this.isConnected(from, to);
+  }
+
+  /** Every directed link with its settings and whether it currently carries traffic. */
+  view(): LinkNetworkView {
+    const links: LinkView[] = [];
+    for (const [k, l] of this.links) {
+      const [from, to] = k.split("->") as [NodeId, NodeId];
+      links.push({ from, to, ...l, connected: l.up && !this.blocked.has(k) });
+    }
+    return { links };
   }
 
   apply(change: NetworkChange): void {

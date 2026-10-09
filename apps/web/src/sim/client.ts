@@ -29,6 +29,7 @@ export const sim = {
   load(scenario: Scenario) {
     useSim.setState({
       protocol: scenario.protocol,
+      config: scenario.config,
       durationMs: scenario.durationMs,
       selectedProcess: null,
       selectedRecord: null,

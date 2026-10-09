@@ -23,6 +23,8 @@ export interface Frame {
   /** Violations found since the previous frame (all of them after a reset). */
   readonly violations: readonly Violation[];
   readonly processes: readonly ProcessState[];
+  /** The network's description of itself (for LinkNetwork, a LinkNetworkView). */
+  readonly network: CanonicalValue | null;
   readonly playing: boolean;
   readonly speed: number;
   readonly events: number;
@@ -180,6 +182,7 @@ export class SimulationHost {
         view: this.sim.view(id),
         timers: this.sim.timers(id),
       })),
+      network: this.sim.networkView(),
       playing: this.playing,
       speed: this.speed,
       events: this.sim.eventCount,

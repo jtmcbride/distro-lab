@@ -8,7 +8,9 @@ export {
   LinkNetwork,
   type LinkConfig,
   type LinkNetworkConfig,
+  type LinkNetworkView,
   type LinkOverride,
+  type LinkView,
   type NetworkChange,
 } from "./linkNetwork.ts";
 export {

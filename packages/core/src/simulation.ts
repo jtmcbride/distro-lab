@@ -111,6 +111,7 @@ export interface RunnableSimulation extends Observable {
   readonly nextEventTime: number | undefined;
   roleOf(id: NodeId): ProcessRole;
   timers(node: NodeId): { key: string; at: number }[];
+  networkView(): CanonicalValue | null;
   step(): boolean;
   runUntil(timeMs: number): void;
   // Harnesses handle actions as plain JSON whose command/change types depend on the
@@ -262,6 +263,11 @@ export class Simulation<
   /** Armed timers of a process and when they fire (empty while it is down). */
   timers(node: NodeId): { key: string; at: number }[] {
     return [...this.runtime(node).timers].map(([key, t]) => ({ key, at: t.at }));
+  }
+
+  /** The network's own description of its state, if it provides one. */
+  networkView(): CanonicalValue | null {
+    return this.network.view?.() ?? null;
   }
 
   /** Time of the next scheduled event, if any. */

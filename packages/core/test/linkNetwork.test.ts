@@ -99,6 +99,17 @@ describe("LinkNetwork topology changes", () => {
     }
   });
 
+  it("describes every link and whether it carries traffic", () => {
+    const net = new LinkNetwork(["A", "B", "C"], { defaults: { latencyMs: 7 } });
+    net.apply({ type: "isolate", node: "C" });
+    net.apply({ type: "setLink", from: "A", to: "B", up: false });
+    const byPair = new Map(net.view().links.map((l) => [`${l.from}${l.to}`, l]));
+    expect(byPair.size).toBe(6);
+    expect(byPair.get("AB")).toMatchObject({ up: false, connected: false, latencyMs: 7 });
+    expect(byPair.get("BA")).toMatchObject({ up: true, connected: true });
+    expect(byPair.get("CA")).toMatchObject({ up: true, connected: false });
+  });
+
   it("restores links and partitions to their initial state", () => {
     const net = new LinkNetwork(NODES, { links: [{ from: "A", to: "B", latencyMs: 99 }] });
     net.apply({ type: "setLink", from: "A", to: "B", latencyMs: 5, up: false });

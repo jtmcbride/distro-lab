@@ -10,6 +10,12 @@
   --good: #15803d;
   --bad: #b91c1c;
   --warn: #b45309;
+  --leader: #2563eb;
+  --candidate: #d97706;
+  --follower: #78716c;
+  --msg-vote: #d97706;
+  --msg-append: #2563eb;
+  --msg-client: #9333ea;
   color-scheme: light dark;
   font-family:
     system-ui,
@@ -30,6 +36,12 @@
     --good: #4ade80;
     --bad: #f87171;
     --warn: #fbbf24;
+    --leader: #60a5fa;
+    --candidate: #fbbf24;
+    --follower: #a8a29e;
+    --msg-vote: #fbbf24;
+    --msg-append: #60a5fa;
+    --msg-client: #c084fc;
   }
 }
 
@@ -196,4 +208,182 @@ button.primary {
 code {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.78rem;
+}
+
+.cluster-view {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.cluster-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-height: 34px;
+  font-size: 0.85rem;
+}
+
+.push-right {
+  margin-left: auto;
+}
+
+.cluster-svg {
+  width: 100%;
+  height: auto;
+  max-height: 60vh;
+  touch-action: none;
+  user-select: none;
+}
+
+.link {
+  stroke: var(--border);
+  stroke-width: 2;
+}
+
+.link-client {
+  stroke-width: 1;
+}
+
+/* Working client links are background detail; cut ones still stand out. */
+.link-client.link-up {
+  opacity: 0.18;
+}
+
+.link-half {
+  stroke: var(--warn);
+  stroke-dasharray: 6 4;
+}
+
+.link-down {
+  stroke: var(--bad);
+  stroke-dasharray: 3 5;
+  opacity: 0.6;
+}
+
+.link-slow.link-up {
+  stroke: var(--warn);
+  stroke-width: 3;
+}
+
+.node {
+  cursor: grab;
+}
+
+.node circle:not(.timer-ring),
+.node rect {
+  fill: var(--panel-2);
+  stroke: var(--follower);
+  stroke-width: 2.5;
+}
+
+.node.role-leader circle:not(.timer-ring) {
+  fill: var(--leader);
+  stroke: var(--leader);
+}
+
+.node.role-candidate circle:not(.timer-ring) {
+  stroke: var(--candidate);
+  stroke-width: 4;
+}
+
+.node.client rect {
+  stroke: var(--msg-client);
+}
+
+.node.down {
+  opacity: 0.45;
+}
+
+.node.down circle,
+.node.down rect {
+  stroke-dasharray: 4 3;
+}
+
+.node.selected circle:not(.timer-ring),
+.node.selected rect {
+  stroke: var(--fg);
+  stroke-width: 3.5;
+}
+
+.node text {
+  text-anchor: middle;
+  dominant-baseline: middle;
+  fill: var(--fg);
+  pointer-events: none;
+}
+
+.node.role-leader text {
+  fill: var(--accent-fg);
+}
+
+.node-id {
+  font-weight: 700;
+  font-size: 15px;
+}
+
+.node-term,
+.node-caption {
+  font-size: 10px;
+}
+
+.node-caption {
+  fill: var(--muted);
+}
+
+.timer-ring {
+  fill: none;
+  stroke: var(--candidate);
+  stroke-width: 3;
+  opacity: 0.7;
+}
+
+.msg {
+  stroke: var(--panel);
+  stroke-width: 1;
+  cursor: pointer;
+}
+
+.msg.minor {
+  opacity: 0.55;
+}
+
+.drop line {
+  stroke: var(--bad);
+  stroke-width: 2.5;
+}
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  font-size: 0.78rem;
+  align-items: center;
+}
+
+.legend .swatch::before,
+.legend .dot::before {
+  content: "";
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  margin-right: 5px;
+  vertical-align: -1px;
+  border: 2px solid var(--follower);
+}
+
+.legend .role-leader::before {
+  background: var(--leader);
+  border-color: var(--leader);
+}
+
+.legend .role-candidate::before {
+  border-color: var(--candidate);
+}
+
+.legend .dot::before {
+  background: var(--c);
+  border-color: var(--c);
 }

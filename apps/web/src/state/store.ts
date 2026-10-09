@@ -1,10 +1,12 @@
 import { create } from "zustand";
-import type { Frame, ProcessState, Violation } from "@distro-lab/core";
+import type { CanonicalValue, Frame, ProcessState, Violation } from "@distro-lab/core";
 import { trace } from "./trace.ts";
 
 export interface SimState {
   readonly loaded: boolean;
   readonly protocol: string;
+  /** Protocol config of the loaded scenario (e.g. Raft timeouts). */
+  readonly config: CanonicalValue | undefined;
   readonly now: number;
   readonly durationMs: number;
   readonly playing: boolean;
@@ -12,6 +14,7 @@ export interface SimState {
   readonly events: number;
   readonly idle: boolean;
   readonly processes: readonly ProcessState[];
+  readonly network: CanonicalValue | null;
   readonly violations: readonly Violation[];
   /** Bumped whenever `trace` changes. */
   readonly traceVersion: number;
@@ -24,6 +27,7 @@ export interface SimState {
 export const useSim = create<SimState>(() => ({
   loaded: false,
   protocol: "raft",
+  config: undefined,
   now: 0,
   durationMs: 0,
   playing: false,
@@ -31,6 +35,7 @@ export const useSim = create<SimState>(() => ({
   events: 0,
   idle: false,
   processes: [],
+  network: null,
   violations: [],
   traceVersion: 0,
   error: null,
@@ -51,6 +56,7 @@ export function applyFrame(frame: Frame): void {
     events: frame.events,
     idle: frame.idle,
     processes: frame.processes,
+    network: frame.network,
     violations: frame.reset ? frame.violations : [...s.violations, ...frame.violations],
     traceVersion: frame.reset || frame.records.length > 0 ? s.traceVersion + 1 : s.traceVersion,
     error: null,
