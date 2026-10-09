@@ -1,0 +1,10 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // No DOM and no Node types: the core must run unchanged in a Worker and in Node.
+    "lib": ["ES2022"],
+    "types": [],
+    "noEmit": true
+  },
+  "include": ["src"]
+}
