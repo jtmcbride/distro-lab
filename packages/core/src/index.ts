@@ -22,6 +22,7 @@ export {
 export {
   Simulation,
   type Action,
+  type ProcessRole,
   type RunnableSimulation,
   type ScheduledAction,
   type SimulationOptions,
@@ -49,3 +50,14 @@ export { generateScenario, type GenerateOptions } from "./harness/generate.ts";
 export { minimizeScenario } from "./harness/minimize.ts";
 export { fuzz, type FuzzFailure, type FuzzOptions, type FuzzReport } from "./harness/fuzz.ts";
 export { defaultRegistry } from "./harness/registry.ts";
+export {
+  DEFAULT_REQUEST_CLIENT_CONFIG,
+  requestClient,
+  type ClientMessage,
+  type ClientReply,
+  type ClientRequest,
+  type RequestClientConfig,
+  type RequestClientPersistent,
+  type RequestClientView,
+  type RequestClientVolatile,
+} from "./clients/requestClient.ts";

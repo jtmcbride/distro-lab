@@ -17,9 +17,20 @@ export interface ScheduledAction<C, N> {
   readonly action: Action<C, N>;
 }
 
-export interface SimulationOptions<P, V, M, C, N> {
+export interface SimulationOptions<P, V, M, C, N, CP = never, CV = never> {
+  /** Protocol run by every server. */
   readonly protocol: Protocol<P, V, M, C>;
+  /** Server ids. Servers' `ctx.peers` are the other servers. */
   readonly nodes: readonly NodeId[];
+  /**
+   * Optional client processes. They are full simulated processes (network links, timers,
+   * crashes) running their own protocol over the same message type; their `ctx.peers` are
+   * the servers. Client commands are usually addressed to them.
+   */
+  readonly clients?: {
+    readonly ids: readonly NodeId[];
+    readonly protocol: Protocol<CP, CV, M, C>;
+  };
   readonly seed: number;
   readonly network: Network<N>;
   readonly actions?: readonly ScheduledAction<C, N>[];
@@ -44,14 +55,19 @@ type Pending<C, N> =
       readonly cause: number;
     };
 
-interface NodeRuntime<P, V> {
+export type ProcessRole = "server" | "client";
+
+interface NodeRuntime<M, C> {
   readonly id: NodeId;
+  readonly role: ProcessRole;
+  // State types differ between servers and clients, so the engine treats them opaquely.
+  readonly protocol: Protocol<unknown, unknown, M, C>;
   readonly peers: readonly NodeId[];
   readonly rng: Rng;
   up: boolean;
   /** Bumped on every crash; identifies which process a timer belongs to. */
   incarnation: number;
-  state: NodeState<P, V>;
+  state: NodeState<unknown, unknown>;
   /** Armed timers: key -> timerId of the firing that is still valid. */
   readonly timers: Map<string, number>;
 }
@@ -83,17 +99,24 @@ export interface RunnableSimulation extends Observable {
 }
 
 /**
- * Deterministic discrete-event simulation of a cluster running one protocol.
+ * Deterministic discrete-event simulation of a cluster of servers (and optionally clients).
  *
- * Given the same options, a simulation emits the same trace. Nodes share no memory: messages
- * and client commands are serialized on the way in.
+ * Given the same options, a simulation emits the same trace. Processes share no memory:
+ * messages and client commands are serialized on the way in.
  */
-export class Simulation<P, V, M, C = never, N = never> implements RunnableSimulation {
-  private readonly protocol: Protocol<P, V, M, C>;
+export class Simulation<
+  P,
+  V,
+  M,
+  C = never,
+  N = never,
+  CP = never,
+  CV = never,
+> implements RunnableSimulation {
   private readonly network: Network<N>;
   private readonly netRng: Rng;
   private readonly queue = new EventQueue<Pending<C, N>>();
-  private readonly runtimes = new Map<NodeId, NodeRuntime<P, V>>();
+  private readonly runtimes = new Map<NodeId, NodeRuntime<M, C>>();
   private readonly sinks: TraceSink[];
   private readonly stepListeners: (() => void)[] = [];
   private readonly actionLog: ScheduledAction<C, N>[] = [];
@@ -103,35 +126,55 @@ export class Simulation<P, V, M, C = never, N = never> implements RunnableSimula
   private nextTimerId = 0;
   private processed = 0;
 
-  constructor(options: SimulationOptions<P, V, M, C, N>) {
+  constructor(options: SimulationOptions<P, V, M, C, N, CP, CV>) {
     const ids = options.nodes;
+    const clientIds = options.clients?.ids ?? [];
     if (ids.length === 0) throw new Error("a simulation needs at least one node");
-    if (new Set(ids).size !== ids.length) throw new Error(`duplicate node ids: ${ids.join(",")}`);
-    this.protocol = options.protocol;
+    const all = [...ids, ...clientIds];
+    if (new Set(all).size !== all.length)
+      throw new Error(`duplicate process ids: ${all.join(",")}`);
     this.network = options.network;
     this.seed = options.seed;
     this.sinks = [...(options.sinks ?? [])];
     const root = Rng.fromSeed(options.seed);
     this.netRng = root.stream("net");
 
-    for (const id of ids) {
-      const runtime: NodeRuntime<P, V> = {
+    const add = (
+      id: NodeId,
+      role: ProcessRole,
+      protocol: Protocol<unknown, unknown, M, C>,
+      peers: readonly NodeId[],
+    ) => {
+      this.runtimes.set(id, {
         id,
-        peers: ids.filter((other) => other !== id),
+        role,
+        protocol,
+        peers,
         rng: root.stream(`node:${id}`),
         up: true,
         incarnation: 0,
         // Filled in by init below.
-        state: undefined as unknown as NodeState<P, V>,
+        state: undefined as unknown as NodeState<unknown, unknown>,
         timers: new Map(),
-      };
-      this.runtimes.set(id, runtime);
+      });
+    };
+    for (const id of ids) {
+      add(
+        id,
+        "server",
+        options.protocol as Protocol<unknown, unknown, M, C>,
+        ids.filter((o) => o !== id),
+      );
+    }
+    if (options.clients !== undefined) {
+      const clientProtocol = options.clients.protocol as Protocol<unknown, unknown, M, C>;
+      for (const id of clientIds) add(id, "client", clientProtocol, ids);
     }
     for (const a of options.actions ?? []) this.schedule(a.atMs, a.action);
     for (const runtime of this.runtimes.values()) {
       const cause = this.emit({ type: "init", t: 0, cause: null, node: runtime.id });
       this.invoke(runtime, cause, (ctx) => {
-        runtime.state = this.protocol.init(ctx);
+        runtime.state = runtime.protocol.init(ctx);
       });
     }
   }
@@ -145,8 +188,22 @@ export class Simulation<P, V, M, C = never, N = never> implements RunnableSimula
     return this.processed;
   }
 
+  /** Server ids, in configuration order. */
   get nodeIds(): readonly NodeId[] {
-    return [...this.runtimes.keys()];
+    return this.idsWithRole("server");
+  }
+
+  /** Client process ids, in configuration order. */
+  get clientIds(): readonly NodeId[] {
+    return this.idsWithRole("client");
+  }
+
+  roleOf(id: NodeId): ProcessRole {
+    return this.runtime(id).role;
+  }
+
+  private idsWithRole(role: ProcessRole): NodeId[] {
+    return [...this.runtimes.values()].filter((r) => r.role === role).map((r) => r.id);
   }
 
   /** True when no further events are scheduled. */
@@ -175,9 +232,10 @@ export class Simulation<P, V, M, C = never, N = never> implements RunnableSimula
     return this.runtime(node).up;
   }
 
-  /** Protocol view of a node (crashed nodes report their durable state's view). */
+  /** Protocol view of a process (crashed ones report their last state's view). */
   view(node: NodeId): CanonicalValue {
-    return this.protocol.view(this.runtime(node).state);
+    const r = this.runtime(node);
+    return r.protocol.view(r.state);
   }
 
   /** Schedules an external action. It becomes part of the scenario, so replays include it. */
@@ -239,7 +297,7 @@ export class Simulation<P, V, M, C = never, N = never> implements RunnableSimula
     return n;
   }
 
-  private runtime(node: NodeId): NodeRuntime<P, V> {
+  private runtime(node: NodeId): NodeRuntime<M, C> {
     const r = this.runtimes.get(node);
     if (r === undefined) throw new Error(`unknown node ${node}`);
     return r;
@@ -270,7 +328,7 @@ export class Simulation<P, V, M, C = never, N = never> implements RunnableSimula
         const cause = this.emit({ type: "recover", t, cause: null, node: r.id });
         const persistent = r.state.persistent;
         this.invoke(r, cause, (ctx) => {
-          r.state = this.protocol.recover(ctx, persistent);
+          r.state = r.protocol.recover(ctx, persistent);
         });
         return;
       }
@@ -281,7 +339,7 @@ export class Simulation<P, V, M, C = never, N = never> implements RunnableSimula
         // A command sent to a crashed node is lost, like a request to a dead server.
         if (!r.up) return;
         this.invoke(r, cause, (ctx) => {
-          this.protocol.onClientCommand(ctx, r.state, JSON.parse(canonicalJson(command)) as C);
+          r.protocol.onClientCommand(ctx, r.state, JSON.parse(canonicalJson(command)) as C);
         });
         return;
       }
@@ -304,7 +362,7 @@ export class Simulation<P, V, M, C = never, N = never> implements RunnableSimula
     }
     const cause = this.emit({ type: "deliver", t, cause: send, from, to, send });
     this.invoke(r, cause, (ctx) => {
-      this.protocol.onMessage(ctx, r.state, from, JSON.parse(wire) as M);
+      r.protocol.onMessage(ctx, r.state, from, JSON.parse(wire) as M);
     });
   }
 
@@ -315,12 +373,12 @@ export class Simulation<P, V, M, C = never, N = never> implements RunnableSimula
     r.timers.delete(key);
     const id = this.emit({ type: "timer", t: this.clock, cause, node, key });
     this.invoke(r, id, (ctx) => {
-      this.protocol.onTimer(ctx, r.state, key);
+      r.protocol.onTimer(ctx, r.state, key);
     });
   }
 
   /** Runs one protocol callback, then applies its buffered effects in request order. */
-  private invoke(r: NodeRuntime<P, V>, cause: number, body: (ctx: NodeContext<M>) => void): void {
+  private invoke(r: NodeRuntime<M, C>, cause: number, body: (ctx: NodeContext<M>) => void): void {
     const effects: Effect<M>[] = [];
     const clock = () => this.clock;
     const checkNode = (id: NodeId) => this.runtime(id);
