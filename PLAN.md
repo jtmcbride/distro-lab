@@ -80,11 +80,17 @@ Design decisions:
 | 3   | Commitment and apply: current-term majority rule, no-op on election, follower commit, in-order apply, state rebuilt after restart                                                            | Unit tests for each commit rule, including old-term entries                       | done   |
 | 4   | KV state machine (`put`/`get`/`cas`) and client protocol: redirects, session table, reply after apply                                                                                        | Requests under crashes and partitions all complete after heal                     | done   |
 | 5   | Invariants: log matching, leader completeness, state-machine safety, commit monotonicity per incarnation, applied ⊆ committed, leader append-only, acknowledged writes durable, exactly-once | Each fires on a hand-built violating history                                      | done   |
-| 6   | Figure 8 scenario, scripted with `timeout` actions and link cuts                                                                                                                             | Correct Raft passes; the commit-rule bug fails                                    |        |
-| 7   | Planted bugs: old-term commit by counting, truncate on every AppendEntries, apply before commit, log lost on restart, no session table                                                       | Each caught by the fuzzer and minimized                                           |        |
-| 8   | Fuzzer workload: random client operations alongside faults; liveness = all client operations complete after heal                                                                             | 10k seeds clean on correct Raft                                                   |        |
-| 9   | Performance: incremental invariant checks as views grow with logs                                                                                                                            | ≥ 50k events/s                                                                    |        |
-| 10  | Tooling: `sim run --state` prints final logs/commit indexes; web placeholder shows per-node logs                                                                                             | Step 7 failures are understandable from the CLI alone                             |        |
+| 6   | Figure 8 scenario, scripted with `timeout` actions and link cuts                                                                                                                             | Correct Raft passes; the commit-rule bug fails                                    | done   |
+| 7   | Planted bugs: old-term commit by counting, truncate on every AppendEntries, apply before commit, log lost on restart, no session table                                                       | Each caught by the fuzzer and minimized                                           | done   |
+| 8   | Fuzzer workload: random client operations alongside faults; liveness = all client operations complete after heal                                                                             | 10k seeds clean on correct Raft                                                   | done   |
+| 9   | Performance: incremental invariant checks as views grow with logs                                                                                                                            | ≥ 50k events/s                                                                    | done   |
+| 10  | Tooling: `sim run --state` prints final logs/commit indexes; web placeholder shows per-node logs                                                                                             | Step 7 failures are understandable from the CLI alone                             | done   |
+
+**Phase 2 result:** 10,000 generated scenarios with client traffic (34.3M events, ~46k
+events/s) with zero safety or liveness failures. Seven of eight planted bugs are found by
+fuzzing (first failing seeds 0–461) and shrunk; the Figure 8 commit bug is caught only by the
+scripted scenario (0 of 1,000 random seeds reach that interleaving). Fuzzing found one real
+bug: AppendEntries follow-ups on duplicated responses caused unbounded message growth.
 
 Out of scope: snapshots/compaction, membership changes, ReadIndex/lease reads, full
 linearizability checking (stretch: bounded checker for ~10-operation histories).
