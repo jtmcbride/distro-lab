@@ -33,6 +33,7 @@ export {
   type Invariant,
   type NodeSnapshot,
   type Observable,
+  type Report,
   type Violation,
 } from "./invariants.ts";
 export * as Raft from "./protocols/raft/index.ts";

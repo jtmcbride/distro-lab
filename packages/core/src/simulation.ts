@@ -94,8 +94,8 @@ function at(now: number, delayMs: number): number {
 /** What harnesses (chaos runner, CLI, UI) need from a simulation, independent of protocol. */
 export interface RunnableSimulation extends Observable {
   readonly eventCount: number;
+  readonly clientIds: readonly NodeId[];
   runUntil(timeMs: number): void;
-  addSink(sink: TraceSink): void;
 }
 
 /**
@@ -230,6 +230,10 @@ export class Simulation<
 
   isUp(node: NodeId): boolean {
     return this.runtime(node).up;
+  }
+
+  incarnation(node: NodeId): number {
+    return this.runtime(node).incarnation;
   }
 
   /** Protocol view of a process (crashed ones report their last state's view). */
