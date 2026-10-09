@@ -2,6 +2,7 @@ import { formatRecord } from "@distro-lab/core";
 import { messageStyle } from "../protocolUi.ts";
 import { useSim } from "../state/store.ts";
 import { recordById } from "../state/trace.ts";
+import { causalChain } from "../state/causes.ts";
 import { outcomesOf } from "../state/traceIndex.ts";
 import { formatMs } from "./PlaybackBar.tsx";
 
@@ -20,6 +21,7 @@ export function RecordDetail() {
         <p>
           <code>{formatRecord(r)}</code>
         </p>
+        <Why id={r.id} />
       </div>
     );
   }
@@ -56,6 +58,38 @@ export function RecordDetail() {
         })}
       </ul>
       <pre className="payload">{JSON.stringify(r.message, null, 2)}</pre>
+      <Why id={r.id} />
+    </div>
+  );
+}
+
+/** The chain of events that led to a record, newest first; each step is selectable. */
+function Why({ id }: { id: number }) {
+  const chain = causalChain(id).slice(1);
+  if (chain.length === 0) {
+    return <p className="muted">Caused directly by the scenario (an action or start-up).</p>;
+  }
+  return (
+    <div className="why">
+      <h3>Why did this happen?</h3>
+      <ol>
+        {chain.map((c) => (
+          <li key={c.id}>
+            <button
+              type="button"
+              className="link-button"
+              onClick={() => useSim.setState({ selectedRecord: c.id })}
+            >
+              <code>{formatRecord(c)}</code>
+            </button>
+          </li>
+        ))}
+      </ol>
+      {chain.at(-1)!.cause === null && (
+        <p className="muted">
+          ↑ root: {chain.at(-1)!.type === "init" ? "node start-up" : "scenario action"}
+        </p>
+      )}
     </div>
   );
 }

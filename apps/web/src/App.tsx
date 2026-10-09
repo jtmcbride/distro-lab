@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { ClusterView } from "./components/ClusterView.tsx";
+import { EventList } from "./components/EventList.tsx";
 import { Inspector } from "./components/Inspector.tsx";
 import { LogGrid } from "./components/LogGrid.tsx";
 import { RecordDetail } from "./components/RecordDetail.tsx";
@@ -8,12 +9,10 @@ import { PlaybackBar } from "./components/PlaybackBar.tsx";
 import { SCENARIO_CHOICES } from "./scenarios.ts";
 import { sim } from "./sim/client.ts";
 import { useSim } from "./state/store.ts";
-import { trace } from "./state/trace.ts";
 
 export function App() {
   const [choice, setChoice] = useState(SCENARIO_CHOICES[0]!.id);
-  const { violations, error } = useSim();
-  useSim((s) => s.traceVersion); // re-render as the trace grows
+  const { error } = useSim();
 
   useEffect(() => {
     const c = SCENARIO_CHOICES.find((x) => x.id === choice) ?? SCENARIO_CHOICES[0]!;
@@ -61,9 +60,7 @@ export function App() {
         </section>
         <section className="panel timeline" aria-label="Timeline">
           <h2>Events</h2>
-          <p className="muted">
-            {trace.length.toLocaleString()} records · {violations.length} violations
-          </p>
+          <EventList />
         </section>
       </main>
     </div>

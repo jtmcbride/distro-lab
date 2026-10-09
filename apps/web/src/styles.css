@@ -636,3 +636,77 @@ pre.payload {
   padding: 8px;
   font-size: 0.72rem;
 }
+
+.event-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  align-items: center;
+  font-size: 0.8rem;
+  margin-bottom: 6px;
+}
+
+.event-scroll {
+  height: 300px;
+  overflow: auto;
+  background: var(--panel-2);
+  border-radius: 6px;
+}
+
+.event-row {
+  position: absolute;
+  left: 0;
+  right: 0;
+  padding: 0 8px;
+  display: flex;
+  align-items: center;
+  white-space: nowrap;
+  cursor: pointer;
+  font-size: 0.75rem;
+}
+
+.event-row:hover {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.event-row.selected {
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+}
+
+.event-row.kind-faults code {
+  color: var(--bad);
+}
+
+.event-row.kind-clients code {
+  color: var(--msg-client);
+}
+
+.event-row.kind-messages code,
+.event-row.kind-timers code {
+  color: var(--muted);
+}
+
+.why h3 {
+  font-size: 0.8rem;
+  margin: 10px 0 4px;
+}
+
+.why ol {
+  margin: 0;
+  padding-left: 20px;
+  max-height: 220px;
+  overflow: auto;
+}
+
+.link-button {
+  border: none;
+  background: none;
+  padding: 0;
+  text-align: left;
+  color: var(--fg);
+  cursor: pointer;
+}
+
+.link-button:hover code {
+  text-decoration: underline;
+}

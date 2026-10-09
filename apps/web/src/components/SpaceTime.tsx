@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { messageStyle } from "../protocolUi.ts";
 import { useSim } from "../state/store.ts";
 import { trace } from "../state/trace.ts";
+import { chainSends } from "../state/causes.ts";
 import { firstAtOrAfter, outcomesIn } from "../state/traceIndex.ts";
 
 const ROW_H = 30;
@@ -139,7 +140,8 @@ export function SpaceTime() {
       ctx.globalAlpha = 1;
     }
 
-    // Messages.
+    // Messages; those on the selected record's causal chain are highlighted.
+    const highlighted = chainSends(selectedRecord);
     const outcomes = outcomesIn(from, Math.min(trace.length, firstAtOrAfter(end + LOOKBACK_MS)));
     const segs: Segment[] = [];
     for (let i = from; i < to; i++) {
@@ -150,7 +152,7 @@ export function SpaceTime() {
       const y1 = row.get(r.from);
       const y2 = row.get(r.to);
       if (y1 === undefined || y2 === undefined) continue;
-      const selected = r.id === selectedRecord;
+      const selected = highlighted.has(r.id);
       ctx.strokeStyle = selected ? accent : color(style.color);
       ctx.fillStyle = ctx.strokeStyle;
       ctx.lineWidth = selected ? 2.5 : style.minor ? 0.8 : 1.4;
