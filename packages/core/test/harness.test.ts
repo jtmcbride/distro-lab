@@ -76,6 +76,15 @@ describe("runScenario", () => {
   });
 });
 
+describe("liveness", () => {
+  it("passes when the cluster converges during the window, even if the end is transient", () => {
+    // Found by fuzzing: a heartbeat lost to ambient loss starts an election 60ms before the
+    // end; an end-of-run snapshot catches followers that have not heard from the new leader.
+    const s = generateScenario(8091, { protocol: "raft" });
+    expect(runScenario(registry, { ...s, actions: [] }).liveness).toEqual([]);
+  });
+});
+
 describe("chaos testing", () => {
   it("finds no safety or liveness failures in correct Raft", () => {
     const report = fuzz(registry, { protocol: "raft", seeds: 150, minimize: false });
@@ -97,11 +106,13 @@ describe("chaos testing", () => {
 });
 
 describe("minimizeScenario", () => {
-  it("drops every action the predicate does not need", () => {
+  it("drops every fault the predicate does not need, but keeps repairs", () => {
     const s = generateScenario(5, { protocol: "raft" });
     const needed = s.actions[2]!;
+    const repairs = s.actions.filter((a) => a.atMs >= s.durationMs - s.livenessAfterMs!);
+    expect(repairs.length).toBeGreaterThan(0);
     const min = minimizeScenario(s, (c) => c.actions.includes(needed));
-    expect(min.actions).toEqual([needed]);
+    expect(min.actions).toEqual([needed, ...repairs]);
     expect(min.network.defaults).toMatchObject({ loss: 0, duplicate: 0, jitterMs: 0 });
   });
 });

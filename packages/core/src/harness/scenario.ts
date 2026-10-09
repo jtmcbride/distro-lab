@@ -7,6 +7,9 @@ import { TraceRecorder, type TraceRecord } from "../trace.ts";
 
 export const SCENARIO_VERSION = 1;
 
+/** Run granularity: violations stop a run within this much virtual time; liveness is sampled. */
+const LIVENESS_SAMPLE_MS = 100;
+
 /** Everything needed to reproduce a run exactly. Plain JSON. */
 export interface Scenario {
   readonly version: number;
@@ -18,8 +21,8 @@ export interface Scenario {
   readonly actions: readonly ScheduledAction<CanonicalValue, NetworkChange>[];
   readonly durationMs: number;
   /**
-   * If set, the liveness check runs at the end: by then all faults must have been lifted
-   * at least this long, and the protocol must have made progress.
+   * If set, the last `livenessAfterMs` of the run is fault-free and the protocol must reach a
+   * good state (e.g. one agreed leader) at some point within it, sampled every 100ms.
    */
   readonly livenessAfterMs?: number;
 }
@@ -32,7 +35,7 @@ export interface ProtocolEntry {
   build(scenario: Scenario): {
     sim: RunnableSimulation;
     monitor: InvariantMonitor<unknown>;
-    /** Problems with progress at the end of the run; empty if live. */
+    /** Problems with progress right now; empty if the cluster is in a good state. */
     liveness(): string[];
   };
 }
@@ -103,20 +106,30 @@ export function runScenario(
   const rec = new TraceRecorder(options.keepTrace ?? false);
   sim.addSink(rec.sink);
 
-  if (options.stopOnViolation ?? true) {
-    // Advance in slices so a broken run stops near the violation instead of running on.
-    for (let t = 0; t < scenario.durationMs && monitor.ok;) {
-      t = Math.min(scenario.durationMs, t + 100);
-      sim.runUntil(t);
-    }
-  } else {
-    sim.runUntil(scenario.durationMs);
+  // Liveness: once faults are lifted, the protocol must reach a good state at some point in
+  // the window. A single end-of-run sample would flag legitimate transient states, such as an
+  // election started by a lost heartbeat just before the end.
+  const livenessFrom =
+    scenario.livenessAfterMs === undefined
+      ? undefined
+      : scenario.durationMs - scenario.livenessAfterMs;
+  let liveProblems: string[] | null = livenessFrom === undefined ? [] : null;
+  const sampleLiveness = (t: number) => {
+    if (livenessFrom === undefined || t < livenessFrom || liveProblems?.length === 0) return;
+    liveProblems = liveness();
+  };
+
+  const stopOnViolation = options.stopOnViolation ?? true;
+  // Advance in slices: lets a broken run stop near its violation and samples liveness.
+  for (let t = 0; t < scenario.durationMs && (monitor.ok || !stopOnViolation);) {
+    t = Math.min(scenario.durationMs, t + LIVENESS_SAMPLE_MS);
+    sim.runUntil(t);
+    sampleLiveness(t);
   }
-  const checkLiveness = monitor.ok && scenario.livenessAfterMs !== undefined;
   return {
     scenario,
     violations: monitor.violations,
-    liveness: checkLiveness ? liveness() : [],
+    liveness: monitor.ok ? (liveProblems ?? []) : [],
     traceHash: rec.hash(),
     events: sim.eventCount,
     ...(options.keepTrace === true ? { trace: rec.records } : {}),
