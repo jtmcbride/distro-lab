@@ -150,6 +150,7 @@ button.primary {
   grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
   grid-template-areas:
     "cluster inspector"
+    "cluster tools"
     "diagram diagram"
     "logs logs"
     "timeline timeline";
@@ -162,6 +163,7 @@ button.primary {
     grid-template-areas:
       "cluster"
       "inspector"
+      "tools"
       "diagram"
       "logs"
       "timeline";
@@ -709,4 +711,73 @@ pre.payload {
 
 .link-button:hover code {
   text-decoration: underline;
+}
+
+.tools {
+  grid-area: tools;
+}
+
+.tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.tabs button {
+  border: none;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  background: none;
+  padding: 4px 10px;
+}
+
+.tabs button.active {
+  border-bottom-color: var(--accent);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.tool {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 0.85rem;
+}
+
+.tool .row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  align-items: flex-end;
+}
+
+.field {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+
+.field input[type="number"] {
+  width: 6.5em;
+}
+
+.small {
+  font-size: 0.78rem;
+  margin: 0;
+}
+
+.partition-grid {
+  display: grid;
+  gap: 2px;
+}
+
+.partition-row {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+}
+
+.partition-row strong {
+  width: 2.5em;
 }

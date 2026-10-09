@@ -5,6 +5,7 @@ import { Inspector } from "./components/Inspector.tsx";
 import { LogGrid } from "./components/LogGrid.tsx";
 import { RecordDetail } from "./components/RecordDetail.tsx";
 import { SpaceTime } from "./components/SpaceTime.tsx";
+import { Tools } from "./components/Tools.tsx";
 import { PlaybackBar } from "./components/PlaybackBar.tsx";
 import { SCENARIO_CHOICES } from "./scenarios.ts";
 import { sim } from "./sim/client.ts";
@@ -48,6 +49,10 @@ export function App() {
         <section className="panel logs" aria-label="Replicated logs">
           <h2>Replicated logs</h2>
           <LogGrid />
+        </section>
+        <section className="panel tools" aria-label="Fault and client tools">
+          <h2>Tools</h2>
+          <Tools />
         </section>
         <section className="panel diagram" aria-label="Message timeline">
           <h2>Message timeline</h2>
