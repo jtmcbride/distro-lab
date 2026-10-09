@@ -4,6 +4,8 @@ import { LinkNetwork, type LinkNetworkConfig, type NetworkChange } from "../link
 import type { NodeId, Protocol } from "../protocol.ts";
 import { Simulation, type RunnableSimulation, type ScheduledAction } from "../simulation.ts";
 import { TraceRecorder, type TraceRecord } from "../trace.ts";
+import type { Workload } from "./generate.ts";
+import type { Rng } from "../rng.ts";
 
 export const SCENARIO_VERSION = 1;
 
@@ -16,7 +18,13 @@ export interface Scenario {
   /** Registry key, e.g. "raft" or a planted-bug variant. */
   readonly protocol: string;
   readonly seed: number;
+  /** Server ids. */
   readonly nodes: readonly NodeId[];
+  /** Client process ids (they run the protocol's client, if it has one). */
+  readonly clients?: readonly NodeId[];
+  /** Protocol-specific configuration, e.g. Raft timeouts. Plain JSON. */
+  readonly config?: CanonicalValue;
+  /** Covers servers and clients. */
   readonly network: LinkNetworkConfig;
   readonly actions: readonly ScheduledAction<CanonicalValue, NetworkChange>[];
   readonly durationMs: number;
@@ -31,6 +39,14 @@ export interface Scenario {
 export interface ProtocolEntry {
   readonly name: string;
   readonly description: string;
+  /** Client operations for generated scenarios, if the protocol serves clients. */
+  readonly workload?: Workload;
+  /** Random protocol settings for generated scenarios, to widen what fuzzing explores. */
+  readonly randomConfig?: (rng: Rng) => CanonicalValue;
+  /** One-line summary of a server's view for CLI output; defaults to its JSON. */
+  readonly formatView?: (view: CanonicalValue) => string;
+  /** Hand-written scenarios by name, e.g. "figure8". */
+  readonly examples?: Readonly<Record<string, (protocol: string) => Scenario>>;
   /** Builds a simulation for the scenario with its invariants attached. */
   build(scenario: Scenario): {
     sim: RunnableSimulation;
@@ -41,22 +57,42 @@ export interface ProtocolEntry {
 }
 
 /** Builds a registry entry, keeping the protocol's own types internal. */
-export function defineProtocol<P, V, M, C, View>(spec: {
+export function defineProtocol<P, V, M, C, View, CP = never, CV = never>(spec: {
   name: string;
   description: string;
-  create: () => Protocol<P, V, M, C>;
+  /** `config` is the scenario's protocol config, if any. */
+  create: (config: CanonicalValue | undefined) => Protocol<P, V, M, C>;
+  /** Protocol for client processes, if the protocol serves clients. */
+  client?: () => Protocol<CP, CV, M, C>;
   invariants: () => Invariant<View>[];
   liveness: (sim: RunnableSimulation, view: (n: NodeId) => View) => string[];
+  workload?: Workload;
+  randomConfig?: (rng: Rng) => CanonicalValue;
+  formatView?: (view: View) => string;
+  examples?: Readonly<Record<string, (protocol: string) => Scenario>>;
 }): ProtocolEntry {
   return {
     name: spec.name,
     description: spec.description,
+    ...(spec.workload === undefined ? {} : { workload: spec.workload }),
+    ...(spec.randomConfig === undefined ? {} : { randomConfig: spec.randomConfig }),
+    ...(spec.formatView === undefined
+      ? {}
+      : { formatView: spec.formatView as (view: CanonicalValue) => string }),
+    ...(spec.examples === undefined ? {} : { examples: spec.examples }),
     build(scenario) {
-      const sim = new Simulation<P, V, M, C, NetworkChange>({
-        protocol: spec.create(),
+      const clients = scenario.clients ?? [];
+      if (clients.length > 0 && spec.client === undefined) {
+        throw new Error(`protocol "${spec.name}" has no client process`);
+      }
+      const sim = new Simulation<P, V, M, C, NetworkChange, CP, CV>({
+        protocol: spec.create(scenario.config),
         nodes: scenario.nodes,
+        ...(spec.client === undefined || clients.length === 0
+          ? {}
+          : { clients: { ids: clients, protocol: spec.client() } }),
         seed: scenario.seed,
-        network: new LinkNetwork(scenario.nodes, scenario.network),
+        network: new LinkNetwork([...scenario.nodes, ...clients], scenario.network),
         actions: scenario.actions as readonly ScheduledAction<C, NetworkChange>[],
       });
       const monitor = new InvariantMonitor<View>(sim, spec.invariants());
@@ -78,6 +114,13 @@ export interface RunResult {
   readonly events: number;
   /** Present when `keepTrace` was requested. */
   readonly trace?: readonly TraceRecord[];
+  /** Final state of every process, when `keepState` was requested. */
+  readonly finalState?: readonly {
+    readonly id: NodeId;
+    readonly role: "server" | "client";
+    readonly up: boolean;
+    readonly view: CanonicalValue;
+  }[];
 }
 
 export function failed(r: RunResult): boolean {
@@ -95,7 +138,7 @@ export function failureKind(r: RunResult): string | null {
 export function runScenario(
   registry: ReadonlyMap<string, ProtocolEntry>,
   scenario: Scenario,
-  options: { keepTrace?: boolean; stopOnViolation?: boolean } = {},
+  options: { keepTrace?: boolean; keepState?: boolean; stopOnViolation?: boolean } = {},
 ): RunResult {
   if (scenario.version !== SCENARIO_VERSION) {
     throw new Error(`unsupported scenario version ${scenario.version}`);
@@ -133,5 +176,13 @@ export function runScenario(
     traceHash: rec.hash(),
     events: sim.eventCount,
     ...(options.keepTrace === true ? { trace: rec.records } : {}),
+    ...(options.keepState === true
+      ? {
+          finalState: [
+            ...sim.nodeIds.map((id) => ({ id, role: "server" as const })),
+            ...sim.clientIds.map((id) => ({ id, role: "client" as const })),
+          ].map((p) => ({ ...p, up: sim.isUp(p.id), view: sim.view(p.id) })),
+        }
+      : {}),
   };
 }

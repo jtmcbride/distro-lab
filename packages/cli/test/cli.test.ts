@@ -56,6 +56,18 @@ describe("sim CLI", () => {
     ).toBe(true);
   });
 
+  it("prints and runs the Figure 8 example, showing final state", () => {
+    const dir = mkdtempSync(join(tmpdir(), "sim-"));
+    for (const protocol of ["raft", "raft-bug-commit-old-terms"]) {
+      const file = join(dir, `${protocol}.json`);
+      writeFileSync(file, cli("example", "figure8", "--protocol", protocol).out);
+      const r = cli("run", file, "--state");
+      expect(r.out).toMatch(/^E {4}up {3}leader t4 /m);
+      expect(r.code).toBe(protocol === "raft" ? 0 : 1);
+    }
+    expect(cli("example", "nope").code).toBe(2);
+  });
+
   it("exits 0 when fuzzing finds nothing", () => {
     const r = cli("fuzz", "--seeds", "5", "--nodes", "3");
     expect(r.code).toBe(0);

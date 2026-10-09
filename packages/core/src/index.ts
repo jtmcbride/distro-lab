@@ -22,6 +22,7 @@ export {
 export {
   Simulation,
   type Action,
+  type ProcessRole,
   type RunnableSimulation,
   type ScheduledAction,
   type SimulationOptions,
@@ -32,6 +33,7 @@ export {
   type Invariant,
   type NodeSnapshot,
   type Observable,
+  type Report,
   type Violation,
 } from "./invariants.ts";
 export * as Raft from "./protocols/raft/index.ts";
@@ -45,7 +47,24 @@ export {
   type RunResult,
   type Scenario,
 } from "./harness/scenario.ts";
-export { generateScenario, type GenerateOptions } from "./harness/generate.ts";
+export { generateScenario, type GenerateOptions, type Workload } from "./harness/generate.ts";
 export { minimizeScenario } from "./harness/minimize.ts";
-export { fuzz, type FuzzFailure, type FuzzOptions, type FuzzReport } from "./harness/fuzz.ts";
+export {
+  fuzz,
+  scenarioForSeed,
+  type FuzzFailure,
+  type FuzzOptions,
+  type FuzzReport,
+} from "./harness/fuzz.ts";
 export { defaultRegistry } from "./harness/registry.ts";
+export {
+  DEFAULT_REQUEST_CLIENT_CONFIG,
+  requestClient,
+  type ClientMessage,
+  type ClientReply,
+  type ClientRequest,
+  type RequestClientConfig,
+  type RequestClientPersistent,
+  type RequestClientView,
+  type RequestClientVolatile,
+} from "./clients/requestClient.ts";

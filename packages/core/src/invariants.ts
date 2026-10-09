@@ -1,9 +1,12 @@
 import type { CanonicalValue } from "./canonical.ts";
 import type { NodeId } from "./protocol.ts";
+import type { TraceRecord, TraceSink } from "./trace.ts";
 
 export interface NodeSnapshot<View> {
   readonly id: NodeId;
   readonly up: boolean;
+  /** Number of times the node has crashed; volatile state resets when it changes. */
+  readonly incarnation: number;
   readonly view: View;
 }
 
@@ -29,17 +32,28 @@ export interface Violation {
  */
 export interface Invariant<View> {
   readonly name: string;
-  check(snapshot: ClusterSnapshot<View>, report: (message: string, nodes: NodeId[]) => void): void;
+  check(snapshot: ClusterSnapshot<View>, report: Report): void;
+  /**
+   * Optional: called for every trace record as it is emitted, mid-step. Used for properties
+   * of client-visible events (e.g. "an acknowledged write is already replicated"). `now()`
+   * gives the servers' state at that moment.
+   */
+  onRecord?(record: TraceRecord, now: () => ClusterSnapshot<View>, report: Report): void;
 }
+
+export type Report = (message: string, nodes: NodeId[]) => void;
 
 /** Anything the monitor can watch; Simulation satisfies this. */
 export interface Observable {
   readonly now: number;
   readonly lastRecordId: number;
+  /** Servers; invariants see only these. */
   readonly nodeIds: readonly NodeId[];
   isUp(node: NodeId): boolean;
+  incarnation(node: NodeId): number;
   view(node: NodeId): CanonicalValue;
   onStep(listener: () => void): void;
+  addSink(sink: TraceSink): void;
 }
 
 /**
@@ -60,6 +74,14 @@ export class InvariantMonitor<View> {
     this.limit = limit;
     this.check();
     sim.onStep(() => this.check());
+    const withHooks = invariants.filter((inv) => inv.onRecord !== undefined);
+    if (withHooks.length > 0) {
+      sim.addSink((record) => {
+        const now = () => this.snapshot();
+        for (const inv of withHooks)
+          inv.onRecord!(record, now, this.reporter(inv, record.t, record.id));
+      });
+    }
   }
 
   get ok(): boolean {
@@ -70,30 +92,34 @@ export class InvariantMonitor<View> {
     return this.violations[0];
   }
 
-  private check(): void {
-    if (this.violations.length >= this.limit) return;
-    const snapshot: ClusterSnapshot<View> = {
+  private snapshot(): ClusterSnapshot<View> {
+    return {
       t: this.sim.now,
       recordId: this.sim.lastRecordId,
       nodes: this.sim.nodeIds.map((id) => ({
         id,
         up: this.sim.isUp(id),
+        incarnation: this.sim.incarnation(id),
         view: this.sim.view(id) as View,
       })),
     };
+  }
+
+  private reporter(inv: Invariant<View>, t: number, recordId: number): Report {
+    return (message, nodes) => {
+      if (this.violations.length >= this.limit) return;
+      const key = `${inv.name}\n${message}`;
+      if (this.seen.has(key)) return;
+      this.seen.add(key);
+      this.violations.push({ invariant: inv.name, message, t, recordId, nodes });
+    };
+  }
+
+  private check(): void {
+    if (this.violations.length >= this.limit) return;
+    const snapshot = this.snapshot();
     for (const inv of this.invariants) {
-      inv.check(snapshot, (message, nodes) => {
-        const key = `${inv.name}\n${message}`;
-        if (this.seen.has(key)) return;
-        this.seen.add(key);
-        this.violations.push({
-          invariant: inv.name,
-          message,
-          t: snapshot.t,
-          recordId: snapshot.recordId,
-          nodes,
-        });
-      });
+      inv.check(snapshot, this.reporter(inv, snapshot.t, snapshot.recordId));
     }
   }
 }

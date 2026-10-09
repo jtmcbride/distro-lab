@@ -6,6 +6,8 @@ import {
   Simulation,
   type CanonicalValue,
   type Observable,
+  type TraceRecord,
+  type TraceSink,
 } from "../src/index.ts";
 
 type View = Raft.RaftView;
@@ -14,14 +16,23 @@ const base: View = {
   term: 0,
   votedFor: null,
   leaderId: null,
-  logLength: 0,
-  lastLogTerm: 0,
+  commitIndex: 0,
+  lastApplied: 0,
+  log: [],
+  data: {},
 };
 
-/** Feeds a scripted sequence of cluster states through the monitor. */
-function replay(states: Record<string, Partial<View> & { up?: boolean }>[]) {
+type NodeState = Partial<View> & { up?: boolean; incarnation?: number };
+type Step = Record<string, NodeState> & { _records?: never };
+
+/**
+ * Feeds a scripted sequence of cluster states through the monitor. `records[i]` are trace
+ * records emitted while moving to state i (seen by onRecord hooks, against state i).
+ */
+function replay(states: Step[], records: TraceRecord[][] = []) {
   let current = states[0]!;
   const listeners: (() => void)[] = [];
+  const sinks: TraceSink[] = [];
   let step = 0;
   const fake: Observable = {
     get now() {
@@ -32,8 +43,10 @@ function replay(states: Record<string, Partial<View> & { up?: boolean }>[]) {
     },
     nodeIds: Object.keys(current),
     isUp: (n) => current[n]?.up !== false,
+    incarnation: (n) => current[n]?.incarnation ?? 0,
+    addSink: (sink) => sinks.push(sink),
     view: (n) => {
-      const { up: _up, ...v } = current[n]!;
+      const { up: _up, incarnation: _i, ...v } = current[n]!;
       return { ...base, ...v } as CanonicalValue;
     },
     onStep: (l) => listeners.push(l),
@@ -42,6 +55,7 @@ function replay(states: Record<string, Partial<View> & { up?: boolean }>[]) {
   for (const s of states.slice(1)) {
     current = s;
     step++;
+    for (const r of records[step] ?? []) sinks.forEach((sink) => sink(r));
     listeners.forEach((l) => l());
   }
   return monitor.violations.map((v) => `${v.invariant}@${v.t}`);
@@ -108,6 +122,108 @@ describe("Raft invariants", () => {
         { A: { term: 3, leaderId: "B" }, B: { term: 4 } },
       ]),
     ).toEqual([]);
+  });
+
+  const e = (term: number, client?: string, seq = 1): Raft.RaftLogEntry =>
+    client === undefined
+      ? { term, command: { kind: "noop" } }
+      : { term, command: { kind: "client", clientId: client, seq, op: { type: "get", key: "k" } } };
+  const leader = (term: number, log: Raft.RaftLogEntry[], extra: NodeState = {}): NodeState => ({
+    role: "leader",
+    term,
+    votedFor: "self",
+    leaderId: null,
+    log,
+    ...extra,
+  });
+
+  it("flag logs that share an (index, term) but differ before it", () => {
+    expect(replay([{ A: { log: [e(1, "c1"), e(2)] }, B: { log: [e(1, "c2"), e(2)] } }])).toContain(
+      "log-matching@0",
+    );
+    expect(replay([{ A: { log: [e(1, "c1"), e(2)] }, B: { log: [e(1, "c1"), e(3)] } }])).toEqual(
+      [],
+    );
+  });
+
+  it("flag a later leader missing a committed entry", () => {
+    expect(
+      replay([
+        { A: { term: 1, log: [e(1, "c1")], commitIndex: 1 }, B: { term: 1 } },
+        {
+          A: { term: 1, log: [e(1, "c1")], commitIndex: 1 },
+          B: leader(2, [e(2)], { leaderId: "B" }),
+        },
+      ]),
+    ).toContain("leader-completeness@1");
+  });
+
+  it("flag two servers applying different entries at one index", () => {
+    expect(
+      replay([
+        {
+          A: { log: [e(1, "c1")], commitIndex: 1, lastApplied: 1 },
+          B: { log: [e(1, "c2")], commitIndex: 1, lastApplied: 1 },
+        },
+      ]),
+    ).toContain("state-machine-safety@0");
+  });
+
+  it("flag applying past commit, committing past the log, and commit going backwards", () => {
+    expect(replay([{ A: { log: [e(1)], commitIndex: 0, lastApplied: 1 } }])).toContain(
+      "commit-bookkeeping@0",
+    );
+    expect(replay([{ A: { log: [], commitIndex: 1 } }])).toContain("commit-bookkeeping@0");
+    expect(
+      replay([{ A: { log: [e(1)], commitIndex: 1 } }, { A: { log: [e(1)], commitIndex: 0 } }]),
+    ).toEqual(["commit-bookkeeping@1"]);
+    // Across a crash and restart the commit index legitimately starts over.
+    expect(
+      replay([
+        { A: { log: [e(1)], commitIndex: 1, lastApplied: 1 } },
+        { A: { log: [e(1)], commitIndex: 1, lastApplied: 1, up: false, incarnation: 1 } },
+        { A: { log: [e(1)], commitIndex: 0, incarnation: 1 } },
+      ]),
+    ).toEqual([]);
+  });
+
+  it("flag a leader rewriting its own log", () => {
+    expect(
+      replay([
+        { A: leader(2, [e(1), e(2, "c1")], { leaderId: "A" }) },
+        { A: leader(2, [e(1), e(2, "c2")], { leaderId: "A" }) },
+      ]),
+      // Log matching also fires: two different entries both claim index 2, term 2.
+    ).toEqual(["log-matching@1", "leader-append-only@1"]);
+    // Appending is fine; so is a different log in a later term. (Entries are reused: real
+    // logs keep their entry objects, and the tracker compares references.)
+    const first = e(1);
+    expect(
+      replay([
+        { A: leader(2, [first], { leaderId: "A" }) },
+        { A: leader(2, [first, e(2)], { leaderId: "A" }) },
+        { A: leader(3, [e(3)], { leaderId: "A" }) },
+      ]),
+    ).toEqual([]);
+  });
+
+  it("flag a client reply for a write not yet on a majority", () => {
+    const complete = (seq: number): TraceRecord => ({
+      id: 1,
+      t: 1,
+      cause: 0,
+      type: "annotate",
+      node: "c1",
+      label: "complete",
+      data: { seq },
+    });
+    const states: Step[] = [
+      { A: {}, B: {}, C: {} },
+      { A: { log: [e(1, "c1")] }, B: {}, C: {} },
+      { A: { log: [e(1, "c1")] }, B: { log: [e(1, "c1")] }, C: {} },
+    ];
+    expect(replay(states, [[], [complete(1)]])).toEqual(["acknowledged-writes-replicated@1"]);
+    expect(replay(states, [[], [], [complete(1)]])).toEqual([]);
   });
 
   it("hold for a correct implementation under crashes and partitions", () => {

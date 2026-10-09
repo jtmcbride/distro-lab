@@ -45,6 +45,21 @@ meaningful relative to them, so changes here are breaking changes.
 - Crashing a crashed node or recovering a live node is a no-op.
 - A client command addressed to a crashed node is recorded in the trace and then lost.
 
+## Clients
+
+- Clients are simulated processes like servers: they have network links, timers, their own
+  RNG stream, and can crash and recover. They run a client protocol over the same message
+  type as the servers. A server's `ctx.peers` lists only servers; a client's lists the servers.
+- Client commands (scenario `client` actions) are delivered to a client process, which turns
+  them into requests over the network. Partitions therefore affect clients too: a client is
+  only as connected as its links.
+- `partition` groups should list clients explicitly; unlisted processes (clients included)
+  form one extra group together.
+- The standard `requestClient` keeps one request outstanding, follows leader redirects,
+  retries on timeout against another server, and persists its request counter so a restart
+  never reuses a `(clientId, seq)`. Its `invoke` / `complete` annotations form the
+  client-visible history; an `invoke` with no `complete` has an unknown outcome.
+
 ## Network
 
 `LinkNetwork` models each directed link with latency, jitter (uniform `[0, jitter)`), loss

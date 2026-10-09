@@ -36,6 +36,7 @@ export type TraceRecord =
       readonly send: number;
       readonly reason: DropReason;
     })
+  /** A timer firing; `cause` is null when forced by a scenario `timeout` action. */
   | (Base & { readonly type: "timer"; readonly node: NodeId; readonly key: string })
   | (Base & { readonly type: "crash"; readonly node: NodeId })
   | (Base & { readonly type: "recover"; readonly node: NodeId })
