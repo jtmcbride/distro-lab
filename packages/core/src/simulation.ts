@@ -328,7 +328,8 @@ export class Simulation<P, V, M, C = never, N = never> {
       switch (e.kind) {
         case "send": {
           const wire = canonicalJson(e.message);
-          const delays = this.network.onSend(r.id, e.to, t, this.netRng);
+          const outcome = this.network.onSend(r.id, e.to, t, this.netRng);
+          const delays = "delays" in outcome ? outcome.delays : [];
           const send = this.emit({
             type: "send",
             t,
@@ -338,6 +339,17 @@ export class Simulation<P, V, M, C = never, N = never> {
             message: JSON.parse(wire) as CanonicalValue,
             copies: delays.length,
           });
+          if ("dropped" in outcome) {
+            this.emit({
+              type: "drop",
+              t,
+              cause: send,
+              from: r.id,
+              to: e.to,
+              send,
+              reason: outcome.dropped,
+            });
+          }
           for (const d of delays) {
             if (!Number.isFinite(d) || d < 0) throw new RangeError(`network returned delay ${d}`);
             this.queue.push(t + d, { kind: "deliver", from: r.id, to: e.to, wire, send });

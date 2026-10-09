@@ -72,7 +72,7 @@ describe("Simulation determinism", () => {
   it("keeps node randomness independent of network randomness", () => {
     // Init timers come from node streams; a network that draws a lot must not perturb them.
     const noisy: Network = {
-      onSend: (_f, _t, _n, rng) => [rng.int(1, 50)],
+      onSend: (_f, _t, _n, rng) => ({ delays: [rng.int(1, 50)] }),
       canDeliver: () => true,
       apply: () => undefined,
     };
@@ -193,7 +193,11 @@ describe("Simulation node lifecycle", () => {
 
 describe("Simulation isolation and validation", () => {
   it("gives every delivered copy its own message", () => {
-    const dup: Network = { onSend: () => [2, 2], canDeliver: () => true, apply: () => undefined };
+    const dup: Network = {
+      onSend: () => ({ delays: [2, 2] }),
+      canDeliver: () => true,
+      apply: () => undefined,
+    };
     const seen: number[][] = [];
     const spy: Protocol<null, null, number[]> = {
       name: "spy",
@@ -218,7 +222,7 @@ describe("Simulation isolation and validation", () => {
   it("drops in-flight messages when the network says the link is down at delivery", () => {
     let up = true;
     const net: Network<"cut"> = {
-      onSend: () => [5],
+      onSend: () => ({ delays: [5] }),
       canDeliver: () => up,
       apply: () => {
         up = false;

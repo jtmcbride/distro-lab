@@ -1,16 +1,19 @@
 import type { NodeId } from "./protocol.ts";
 import type { Rng } from "./rng.ts";
 
+export type SendOutcome =
+  { readonly delays: readonly number[] } | { readonly dropped: "loss" | "link-down" };
+
 /**
  * The engine's view of the network. Implementations decide, using only the supplied RNG,
  * what happens to each message.
  */
 export interface Network<Change = never> {
   /**
-   * Called when `from` sends to `to`. Returns one delay per copy to deliver: [] drops the
-   * message, two entries duplicate it.
+   * Called when `from` sends to `to`: either one delay per copy to deliver (two entries
+   * duplicate the message) or the reason it is dropped.
    */
-  onSend(from: NodeId, to: NodeId, now: number, rng: Rng): number[];
+  onSend(from: NodeId, to: NodeId, now: number, rng: Rng): SendOutcome;
   /** Checked again at delivery time; false drops a message that was in flight. */
   canDeliver(from: NodeId, to: NodeId, now: number): boolean;
   /** Applies a scheduled network action (partition, heal, latency change, ...). */
@@ -21,8 +24,8 @@ export interface Network<Change = never> {
 export class FixedLatencyNetwork implements Network {
   constructor(private readonly delayMs: number) {}
 
-  onSend(): number[] {
-    return [this.delayMs];
+  onSend(): SendOutcome {
+    return { delays: [this.delayMs] };
   }
 
   canDeliver(): boolean {

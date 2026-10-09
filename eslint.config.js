@@ -7,7 +7,13 @@ export default tseslint.config(
   ...tseslint.configs.strict,
   {
     // noUncheckedIndexedAccess is on; `!` after a bounds check is the intended escape hatch.
-    rules: { "@typescript-eslint/no-non-null-assertion": "off" },
+    rules: {
+      "@typescript-eslint/no-non-null-assertion": "off",
+      "@typescript-eslint/no-unused-vars": [
+        "error",
+        { argsIgnorePattern: "^_", varsIgnorePattern: "^_", ignoreRestSiblings: true },
+      ],
+    },
   },
   {
     files: ["packages/core/src/**/*.ts"],

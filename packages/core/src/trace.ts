@@ -9,7 +9,8 @@ interface Base {
   readonly cause: number | null;
 }
 
-export type DropReason = "network" | "link-down" | "node-down";
+/** Why a message was not delivered: lost in transit, link unavailable, or receiver down. */
+export type DropReason = "loss" | "link-down" | "node-down";
 
 export type TraceRecord =
   | (Base & { readonly type: "init"; readonly node: NodeId })
@@ -18,7 +19,7 @@ export type TraceRecord =
       readonly from: NodeId;
       readonly to: NodeId;
       readonly message: CanonicalValue;
-      /** Number of copies the network scheduled (0 = dropped at send). */
+      /** Number of copies the network scheduled (0 = dropped at send, see the drop record). */
       readonly copies: number;
     })
   | (Base & {

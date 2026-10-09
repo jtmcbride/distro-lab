@@ -2,7 +2,15 @@ export { Rng, hashString32, type RngState } from "./rng.ts";
 export { EventQueue, type Queued } from "./eventQueue.ts";
 export { canonicalJson, hashCanonical, Hasher, type CanonicalValue } from "./canonical.ts";
 export type { NodeContext, NodeId, NodeState, Protocol } from "./protocol.ts";
-export { FixedLatencyNetwork, type Network } from "./network.ts";
+export { FixedLatencyNetwork, type Network, type SendOutcome } from "./network.ts";
+export {
+  DEFAULT_LINK,
+  LinkNetwork,
+  type LinkConfig,
+  type LinkNetworkConfig,
+  type LinkOverride,
+  type NetworkChange,
+} from "./linkNetwork.ts";
 export {
   formatRecord,
   TraceRecorder,
