@@ -13,8 +13,10 @@ pnpm check   # format, lint, typecheck, test
 - `packages/core`: simulation engine, network model, protocols (Raft), invariants, chaos
   harness. No DOM or Node dependencies.
 - `packages/cli`: `sim` command-line tool (runs directly on Node 22 via type stripping).
-- `apps/web`: browser app (currently a placeholder that runs one scenario in the page).
-  `pnpm -C apps/web dev` to develop. Deployed to GitHub Pages from `main`.
+- `apps/web`: interactive browser app (simulation in a Web Worker; cluster view, message
+  timeline, node inspector, log grid, causal event list, fault and client tools, share
+  links). `pnpm -C apps/web dev` to develop; `pnpm -C apps/web e2e` runs the Playwright
+  suite. Deployed to GitHub Pages from `main`.
 
 ## CLI
 

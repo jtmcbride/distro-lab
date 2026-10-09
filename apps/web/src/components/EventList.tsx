@@ -87,9 +87,19 @@ export function EventList() {
       const r = trace[f.read]!;
       if (kinds.has(kindOf(r)) && (process === "" || involves(r, process))) f.rows.push(f.read);
     }
-    return f.rows.slice();
+    // The selected record is always listed, even if the filters would hide it (e.g. a
+    // violation detected at a message send while messages are hidden).
+    const rows = f.rows.slice();
+    const selectedIndex =
+      selectedRecord === null ? -1 : trace.findIndex((r) => r.id === selectedRecord);
+    if (selectedIndex >= 0 && !f.rows.includes(selectedIndex)) {
+      let at = 0;
+      while (at < rows.length && rows[at]! < selectedIndex) at++;
+      rows.splice(at, 0, selectedIndex);
+    }
+    return rows;
     // traceVersion drives re-reading the shared trace buffer.
-  }, [key, kinds, process, traceVersion]);
+  }, [key, kinds, process, traceVersion, selectedRecord]);
 
   const virtualizer = useVirtualizer({
     count: rows.length,
@@ -101,6 +111,16 @@ export function EventList() {
   useEffect(() => {
     if (follow && rows.length > 0) virtualizer.scrollToIndex(rows.length - 1, { align: "end" });
   }, [rows.length, follow, virtualizer]);
+
+  // Bring a newly selected record into view (and stop following the newest).
+  useEffect(() => {
+    if (selectedRecord === null) return;
+    const at = rows.findIndex((i) => trace[i]?.id === selectedRecord);
+    if (at < 0) return;
+    setFollow(false);
+    virtualizer.scrollToIndex(at, { align: "center" });
+    // Deliberately keyed on the selection only, not on every new record.
+  }, [selectedRecord]);
 
   const toggle = (k: Kind) =>
     setKinds((prev) => {

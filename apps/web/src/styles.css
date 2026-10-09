@@ -789,8 +789,14 @@ pre.payload {
   align-items: center;
 }
 
+.scenario-menu label {
+  min-width: 0;
+  max-width: 100%;
+}
+
 .scenario-menu select {
-  max-width: 22em;
+  min-width: 0;
+  max-width: min(22em, calc(100vw - 110px));
 }
 
 .popover {

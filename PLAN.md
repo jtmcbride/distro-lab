@@ -124,7 +124,7 @@ Design decisions:
 | 6   | Event list + causal chains: virtualized, filterable; selecting an event highlights its causes across all views                                              | "B becameLeader" shows timeout → RequestVotes → grants                          | done   |
 | 7   | Fault and client tools: link editor, partition builder, network degradation, client panel (get/put/cas, pending requests)                                   | Every fault in docs/semantics.md is reachable from the UI                       | done   |
 | 8   | Scenarios and violations: examples, generate from seed, import/export JSON, share by URL, violation panel with jump-to                                      | A `sim fuzz` failure file opens in the UI at its violation                      | done   |
-| 9   | Hardening: Playwright e2e in CI, performance check, phone-width layout, Pages deploy                                                                        | CI runs e2e; the live site works                                                |        |
+| 9   | Hardening: Playwright e2e in CI, performance check, phone-width layout, Pages deploy                                                                        | CI runs e2e; the live site works                                                | done   |
 
 Out of scope: snapshots, branching what-if comparisons, minimization in the UI (phase 4).
 
