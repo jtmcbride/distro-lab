@@ -14,8 +14,10 @@ const base: View = {
   term: 0,
   votedFor: null,
   leaderId: null,
-  logLength: 0,
-  lastLogTerm: 0,
+  commitIndex: 0,
+  lastApplied: 0,
+  log: [],
+  data: {},
 };
 
 /** Feeds a scripted sequence of cluster states through the monitor. */
