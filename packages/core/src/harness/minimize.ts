@@ -1,9 +1,10 @@
 import type { Scenario } from "./scenario.ts";
 
 /**
- * Greedy delta debugging: repeatedly drops individual actions and simplifies the network
- * while `stillFails` holds. Returns a scenario that fails the same way and from which no
- * single fault can be removed. Repair actions in the liveness window are always kept. Costs O(actions²) runs in the worst case.
+ * Delta debugging: simplifies the network, then drops chunks of actions (halving the chunk
+ * size down to one) while `stillFails` holds. Returns a scenario that fails the same way and
+ * from which no single fault can be removed. Repair actions in the liveness window are
+ * always kept.
  */
 export function minimizeScenario(
   scenario: Scenario,
@@ -17,30 +18,34 @@ export function minimizeScenario(
       ? Infinity
       : scenario.durationMs - scenario.livenessAfterMs;
 
-  const defaults = best.network.defaults ?? {};
   for (const simplification of [{ loss: 0 }, { duplicate: 0 }, { jitterMs: 0 }]) {
     const candidate: Scenario = {
       ...best,
-      network: {
-        ...best.network,
-        defaults: { ...defaults, ...best.network.defaults, ...simplification },
-      },
+      network: { ...best.network, defaults: { ...best.network.defaults, ...simplification } },
     };
     if (stillFails(candidate)) best = candidate;
   }
 
-  for (let changed = true; changed;) {
-    changed = false;
-    // Later actions first: they are the most likely to be irrelevant to an earlier failure.
-    for (let i = best.actions.length - 1; i >= 0; i--) {
-      if (best.actions[i]!.atMs >= repairsFrom) continue;
-      const candidate: Scenario = { ...best, actions: best.actions.filter((_, j) => j !== i) };
+  // Large irrelevant groups go in a few runs instead of one run per action. Later chunks
+  // first: they are the most likely to be irrelevant to an earlier failure.
+  const faults = best.actions.filter((a) => a.atMs < repairsFrom).length;
+  let size = Math.max(1, Math.floor(faults / 2));
+  for (;;) {
+    let changed = false;
+    for (let end = best.actions.length; end > 0; end -= size) {
+      const start = Math.max(0, end - size);
+      if (best.actions.slice(start, end).some((a) => a.atMs >= repairsFrom)) continue;
+      const candidate: Scenario = {
+        ...best,
+        actions: [...best.actions.slice(0, start), ...best.actions.slice(end)],
+      };
       if (stillFails(candidate)) {
         best = candidate;
         changed = true;
       }
     }
+    if (size > 1) size = Math.floor(size / 2);
+    else if (!changed) break;
   }
-
   return best;
 }

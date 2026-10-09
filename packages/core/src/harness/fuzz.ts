@@ -39,7 +39,13 @@ export function fuzz(
   let events = 0;
   let runs = 0;
   for (let seed = first; seed < first + options.seeds; seed++) {
-    const result = runScenario(registry, generateScenario(seed, options));
+    const entry = registry.get(options.protocol);
+    const scenario = generateScenario(seed, {
+      ...options,
+      workload: entry?.workload,
+      randomConfig: entry?.randomConfig,
+    });
+    const result = runScenario(registry, scenario);
     runs++;
     events += result.events;
     if (failed(result)) {

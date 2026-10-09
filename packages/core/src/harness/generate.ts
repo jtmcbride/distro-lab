@@ -15,7 +15,22 @@ export interface GenerateOptions {
   readonly maxFaults?: number;
   /** After the fault window everything is repaired; the run continues this long. */
   readonly stabilizeMs?: number;
+  /** Client operations to issue (from the protocol's registry entry). No clients if absent. */
+  readonly workload?: Workload | undefined;
+  /** Draws protocol settings for the scenario (from the registry entry). */
+  readonly randomConfig?: ((rng: Rng) => CanonicalValue) | undefined;
 }
+
+/**
+ * Generates client operations for `clients` between `fromMs` and `toMs`. Protocol-specific:
+ * it decides what operations look like and how their results can be checked.
+ */
+export type Workload = (
+  rng: Rng,
+  clients: readonly NodeId[],
+  fromMs: number,
+  toMs: number,
+) => ScheduledAction<CanonicalValue, NetworkChange>[];
 
 type Action = ScheduledAction<CanonicalValue, NetworkChange>["action"];
 
@@ -27,10 +42,19 @@ export function generateScenario(seed: number, options: GenerateOptions): Scenar
   const rng = Rng.fromSeed(seed).stream("scenario");
   const sizes = options.clusterSizes ?? [3, 5];
   const faultWindowMs = options.faultWindowMs ?? 10_000;
-  const stabilizeMs = options.stabilizeMs ?? 4_000;
+  // Clients may need to drain a backlog queued while they were cut off.
+  const stabilizeMs = options.stabilizeMs ?? (options.workload === undefined ? 4_000 : 8_000);
   const nodes: NodeId[] = Array.from({ length: rng.pick(sizes) }, (_, i) =>
     String.fromCharCode(65 + i),
   );
+
+  // Client choices use their own stream so server-only scenarios stay the same with or
+  // without a workload.
+  const wrng = rng.stream("workload");
+  const clients: NodeId[] =
+    options.workload === undefined
+      ? []
+      : Array.from({ length: wrng.int(1, 3) }, (_, i) => `c${i + 1}`);
 
   const actions: { atMs: number; action: Action }[] = [];
   const net = (change: NetworkChange): Action => ({ type: "network", change });
@@ -49,7 +73,10 @@ export function generateScenario(seed: number, options: GenerateOptions): Scenar
       actions.push({ atMs, action: { type: "crash", node } });
       actions.push({ atMs: atMs + rng.int(0, 300), action: { type: "recover", node } });
     } else if (roll < 0.6) {
-      actions.push({ atMs, action: net({ type: "partition", groups: randomGroups(rng, nodes) }) });
+      const groups = randomGroups(rng, nodes);
+      // Clients land on a random side; they are never crashed, only cut off.
+      for (const c of clients) groups[wrng.int(0, groups.length - 1)]!.push(c);
+      actions.push({ atMs, action: net({ type: "partition", groups }) });
     } else if (roll < 0.65) {
       actions.push({ atMs, action: net({ type: "isolate", node }) });
     } else if (roll < 0.75) {
@@ -82,12 +109,21 @@ export function generateScenario(seed: number, options: GenerateOptions): Scenar
   actions.push({ atMs: faultWindowMs, action: net({ type: "restore" }) });
   for (const node of nodes)
     actions.push({ atMs: faultWindowMs, action: { type: "recover", node } });
+  if (options.workload !== undefined) {
+    actions.push(...options.workload(wrng, clients, 300, faultWindowMs));
+    // Stable: at equal times, faults and repairs stay ahead of client operations.
+    actions.sort((a, b) => a.atMs - b.atMs);
+  }
 
   return {
     version: SCENARIO_VERSION,
     protocol: options.protocol,
     seed,
     nodes,
+    ...(clients.length > 0 ? { clients } : {}),
+    ...(options.randomConfig === undefined
+      ? {}
+      : { config: options.randomConfig(rng.stream("config")) }),
     network: {
       defaults: {
         latencyMs: rng.int(1, 20),

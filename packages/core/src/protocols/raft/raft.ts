@@ -1,6 +1,6 @@
 import type { ClientReply, ClientRequest } from "../../clients/requestClient.ts";
 import type { NodeContext, NodeId, NodeState, Protocol } from "../../protocol.ts";
-import { applyClientCommand, emptyKv, type KvOp, type KvResult } from "./kv.ts";
+import { applyClientCommand, emptyKv, executeKv, type KvOp, type KvResult } from "./kv.ts";
 import {
   DEFAULT_RAFT_CONFIG,
   type AppendEntries,
@@ -14,6 +14,18 @@ import {
   type RequestVote,
   type RequestVoteResponse,
 } from "./types.ts";
+
+/** Internal switches for the planted-bug variants in bugs.ts. */
+export interface PlantedRaftBugs {
+  /** Commit any majority-replicated index, ignoring the current-term rule (Figure 8). */
+  readonly commitOldTerms?: boolean;
+  /** On AppendEntries, drop everything after prevLogIndex even when it matches. */
+  readonly truncateAlways?: boolean;
+  /** Followers treat entries as committed as soon as they receive them. */
+  readonly trustReceivedEntries?: boolean;
+  /** No session table: retried requests execute again. */
+  readonly noSessions?: boolean;
+}
 
 type State = NodeState<RaftPersistent, RaftVolatile>;
 type Ctx = NodeContext<RaftMessage>;
@@ -31,6 +43,8 @@ const HEARTBEAT_TIMER = "heartbeat";
  */
 export function raft(
   overrides: Partial<RaftConfig> = {},
+  /** Deliberate defects for testing the checkers. See bugs.ts; never set otherwise. */
+  bugs: PlantedRaftBugs = {},
 ): Protocol<RaftPersistent, RaftVolatile, RaftMessage, KvOp> {
   const config = { ...DEFAULT_RAFT_CONFIG, ...overrides };
   if (
@@ -227,6 +241,7 @@ export function raft(
 
     // Append, truncating only at the first real conflict. A stale or reordered request
     // whose entries we already have must not cut off entries that follow them.
+    if (bugs.truncateAlways === true && m.entries.length > 0) p.log.length = m.prevLogIndex;
     m.entries.forEach((entry, i) => {
       const index = m.prevLogIndex + 1 + i;
       if (index <= lastLogIndex(s)) {
@@ -239,7 +254,10 @@ export function raft(
     // Only entries known to match the leader may be marked committed. A stale request can
     // carry a smaller lastNew than what we already committed; never move backwards.
     const lastNew = m.prevLogIndex + m.entries.length;
-    v.commitIndex = Math.max(v.commitIndex, Math.min(m.leaderCommit, lastNew));
+    v.commitIndex = Math.max(
+      v.commitIndex,
+      bugs.trustReceivedEntries === true ? lastNew : Math.min(m.leaderCommit, lastNew),
+    );
     applyCommitted(ctx, s);
     const response: AppendEntriesResponse = {
       type: "AppendEntriesResponse",
@@ -298,7 +316,7 @@ export function raft(
   function advanceCommit(ctx: Ctx, s: State): void {
     const v = s.volatile;
     for (let n = lastLogIndex(s); n > v.commitIndex; n--) {
-      if (termAt(s, n) !== s.persistent.currentTerm) break;
+      if (termAt(s, n) !== s.persistent.currentTerm && bugs.commitOldTerms !== true) break;
       const replicas = 1 + ctx.peers.filter((peer) => (v.matchIndex[peer] ?? 0) >= n).length;
       if (replicas >= majority(ctx)) {
         v.commitIndex = n;
@@ -318,7 +336,10 @@ export function raft(
       const entry: RaftLogEntry = s.persistent.log[v.lastApplied - 1]!;
       if (entry.command.kind !== "client") continue;
       const { clientId, seq, op } = entry.command;
-      const result = applyClientCommand(v.kv, clientId, seq, op);
+      const result =
+        bugs.noSessions === true
+          ? executeKv(v.kv.data, op)
+          : applyClientCommand(v.kv, clientId, seq, op);
       // Only the leader answers; any leader that applies an entry can, even one appended
       // by a predecessor, since the client matches replies by seq.
       if (result !== null && v.role === "leader") reply(ctx, clientId, seq, result);
@@ -342,14 +363,14 @@ export function raft(
       ctx.send(from, redirect);
       return;
     }
-    const session = v.kv.sessions[m.clientId];
+    const session = bugs.noSessions === true ? undefined : v.kv.sessions[m.clientId];
     if (session !== undefined && m.seq <= session.seq) {
       // Already applied: answer from the session table instead of re-executing.
       if (m.seq === session.seq) reply(ctx, m.clientId, m.seq, session.result);
       return;
     }
     // A retry of a request that is already in our log but not yet applied: wait for it.
-    for (let i = lastLogIndex(s); i > v.lastApplied; i--) {
+    for (let i = lastLogIndex(s); i > v.lastApplied && bugs.noSessions !== true; i--) {
       const c = s.persistent.log[i - 1]!.command;
       if (c.kind === "client" && c.clientId === m.clientId && c.seq === m.seq) return;
     }

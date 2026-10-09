@@ -17,9 +17,12 @@ const USAGE = `Usage: sim <command> [options]
 Commands:
   list                         List protocols and planted-bug variants
   gen  --seed N [--protocol P] Print the scenario generated from a seed
+  example <name> [--protocol P]
+                               Print a hand-written scenario (e.g. figure8)
   run  <scenario.json>         Run a scenario and report violations
        [--trace] [--tail N]    Print the whole trace, or the last N records up to
                                the first violation
+       [--state]               Print every process's final state
   fuzz [--protocol P]          Run generated scenarios and report failures
        [--seeds N] [--first S] [--nodes 3,5] [--max-failures K]
        [--out DIR] [--no-minimize]
@@ -68,10 +71,32 @@ export function main(argv: readonly string[], io: Io = nodeIo): number {
           args: rest,
           options: { seed: { type: "string" }, protocol: { type: "string", default: "raft" } },
         });
+        const entry = registry.get(values.protocol);
+        if (entry === undefined) throw new UsageError(`unknown protocol "${values.protocol}"`);
         const scenario = generateScenario(int(values.seed, "seed", 0), {
           protocol: values.protocol,
+          workload: entry.workload,
+          randomConfig: entry.randomConfig,
         });
         io.out(JSON.stringify(scenario, null, 2));
+        return 0;
+      }
+
+      case "example": {
+        const { values, positionals } = parseArgs({
+          args: rest,
+          allowPositionals: true,
+          options: { protocol: { type: "string", default: "raft" } },
+        });
+        const entry = registry.get(values.protocol);
+        if (entry === undefined) throw new UsageError(`unknown protocol "${values.protocol}"`);
+        const name = positionals[0];
+        const make = name === undefined ? undefined : entry.examples?.[name];
+        if (make === undefined) {
+          const known = Object.keys(entry.examples ?? {}).join(", ") || "none";
+          throw new UsageError(`unknown example "${name ?? ""}" (available: ${known})`);
+        }
+        io.out(JSON.stringify(make(values.protocol), null, 2));
         return 0;
       }
 
@@ -79,7 +104,11 @@ export function main(argv: readonly string[], io: Io = nodeIo): number {
         const { values, positionals } = parseArgs({
           args: rest,
           allowPositionals: true,
-          options: { trace: { type: "boolean", default: false }, tail: { type: "string" } },
+          options: {
+            trace: { type: "boolean", default: false },
+            tail: { type: "string" },
+            state: { type: "boolean", default: false },
+          },
         });
         const file = positionals[0];
         if (file === undefined) throw new UsageError("run needs a scenario file");
@@ -87,12 +116,21 @@ export function main(argv: readonly string[], io: Io = nodeIo): number {
         const tail = values.tail === undefined ? undefined : int(values.tail, "tail", 0);
         const r = runScenario(registry, scenario, {
           keepTrace: values.trace || tail !== undefined,
+          keepState: values.state,
         });
         if (r.trace !== undefined) {
           const firstBad = r.violations[0]?.recordId ?? Infinity;
           const upTo = r.trace.filter((rec) => rec.id <= firstBad);
           const shown = tail === undefined ? r.trace : upTo.slice(-tail);
           for (const rec of shown) io.out(formatRecord(rec));
+        }
+        if (r.finalState !== undefined) {
+          const format = registry.get(scenario.protocol)?.formatView;
+          for (const p of r.finalState) {
+            const view =
+              p.role === "server" && format !== undefined ? format(p.view) : JSON.stringify(p.view);
+            io.out(`${p.id.padEnd(4)} ${p.up ? "up  " : "DOWN"} ${view}`);
+          }
         }
         io.out(
           `protocol=${scenario.protocol} seed=${scenario.seed} events=${r.events} trace=${r.traceHash}`,

@@ -10,6 +10,11 @@ export type Action<C, N> =
   | { readonly type: "crash"; readonly node: NodeId }
   | { readonly type: "recover"; readonly node: NodeId }
   | { readonly type: "client"; readonly node: NodeId; readonly command: C }
+  /**
+   * Fires `node`'s timer `key` now (cancelling its pending firing), e.g. to force an
+   * election. Ignored if the node is down. Used to script exact scenarios.
+   */
+  | { readonly type: "timeout"; readonly node: NodeId; readonly key: string }
   | { readonly type: "network"; readonly change: N };
 
 export interface ScheduledAction<C, N> {
@@ -344,6 +349,16 @@ export class Simulation<
         if (!r.up) return;
         this.invoke(r, cause, (ctx) => {
           r.protocol.onClientCommand(ctx, r.state, JSON.parse(canonicalJson(command)) as C);
+        });
+        return;
+      }
+      case "timeout": {
+        const r = this.runtime(action.node);
+        if (!r.up) return;
+        r.timers.delete(action.key);
+        const cause = this.emit({ type: "timer", t, cause: null, node: r.id, key: action.key });
+        this.invoke(r, cause, (ctx) => {
+          r.protocol.onTimer(ctx, r.state, action.key);
         });
         return;
       }

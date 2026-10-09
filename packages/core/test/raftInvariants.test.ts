@@ -193,12 +193,15 @@ describe("Raft invariants", () => {
         { A: leader(2, [e(1), e(2, "c1")], { leaderId: "A" }) },
         { A: leader(2, [e(1), e(2, "c2")], { leaderId: "A" }) },
       ]),
-    ).toEqual(["leader-append-only@1"]);
-    // Appending is fine; so is a different log in a later term.
+      // Log matching also fires: two different entries both claim index 2, term 2.
+    ).toEqual(["log-matching@1", "leader-append-only@1"]);
+    // Appending is fine; so is a different log in a later term. (Entries are reused: real
+    // logs keep their entry objects, and the tracker compares references.)
+    const first = e(1);
     expect(
       replay([
-        { A: leader(2, [e(1)], { leaderId: "A" }) },
-        { A: leader(2, [e(1), e(2)], { leaderId: "A" }) },
+        { A: leader(2, [first], { leaderId: "A" }) },
+        { A: leader(2, [first, e(2)], { leaderId: "A" }) },
         { A: leader(3, [e(3)], { leaderId: "A" }) },
       ]),
     ).toEqual([]);
