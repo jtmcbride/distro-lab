@@ -1,5 +1,6 @@
 import { canonicalJson, type CanonicalValue } from "./canonical.ts";
 import { EventQueue } from "./eventQueue.ts";
+import type { Observable } from "./invariants.ts";
 import type { Network } from "./network.ts";
 import type { NodeContext, NodeId, NodeState, Protocol } from "./protocol.ts";
 import { Rng } from "./rng.ts";
@@ -69,19 +70,32 @@ type Effect<M> =
 type Emit = (record: DistributiveOmit<TraceRecord, "id">) => number;
 type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
 
+/** `now + delay`, rounded to microseconds so float noise never leaks into traces. */
+function at(now: number, delayMs: number): number {
+  return Math.round((now + delayMs) * 1000) / 1000;
+}
+
+/** What harnesses (chaos runner, CLI, UI) need from a simulation, independent of protocol. */
+export interface RunnableSimulation extends Observable {
+  readonly eventCount: number;
+  runUntil(timeMs: number): void;
+  addSink(sink: TraceSink): void;
+}
+
 /**
  * Deterministic discrete-event simulation of a cluster running one protocol.
  *
  * Given the same options, a simulation emits the same trace. Nodes share no memory: messages
  * and client commands are serialized on the way in.
  */
-export class Simulation<P, V, M, C = never, N = never> {
+export class Simulation<P, V, M, C = never, N = never> implements RunnableSimulation {
   private readonly protocol: Protocol<P, V, M, C>;
   private readonly network: Network<N>;
   private readonly netRng: Rng;
   private readonly queue = new EventQueue<Pending<C, N>>();
   private readonly runtimes = new Map<NodeId, NodeRuntime<P, V>>();
   private readonly sinks: TraceSink[];
+  private readonly stepListeners: (() => void)[] = [];
   private readonly actionLog: ScheduledAction<C, N>[] = [];
   private readonly seed: number;
   private clock = 0;
@@ -144,6 +158,19 @@ export class Simulation<P, V, M, C = never, N = never> {
     this.sinks.push(sink);
   }
 
+  /**
+   * Called after every processed event, once all of its effects are applied. This is the
+   * only point where cluster state is between atomic steps, so invariants belong here.
+   */
+  onStep(listener: () => void): void {
+    this.stepListeners.push(listener);
+  }
+
+  /** Id of the most recent trace record, or -1 before any. */
+  get lastRecordId(): number {
+    return this.nextRecordId - 1;
+  }
+
   isUp(node: NodeId): boolean {
     return this.runtime(node).up;
   }
@@ -193,6 +220,7 @@ export class Simulation<P, V, M, C = never, N = never> {
         this.fireTimer(ev.node, ev.key, ev.timerId, ev.cause);
         break;
     }
+    for (const listener of this.stepListeners) listener();
     return true;
   }
 
@@ -352,14 +380,20 @@ export class Simulation<P, V, M, C = never, N = never> {
           }
           for (const d of delays) {
             if (!Number.isFinite(d) || d < 0) throw new RangeError(`network returned delay ${d}`);
-            this.queue.push(t + d, { kind: "deliver", from: r.id, to: e.to, wire, send });
+            this.queue.push(at(t, d), { kind: "deliver", from: r.id, to: e.to, wire, send });
           }
           break;
         }
         case "setTimer": {
           const timerId = this.nextTimerId++;
           r.timers.set(e.key, timerId);
-          this.queue.push(t + e.delayMs, { kind: "timer", node: r.id, key: e.key, timerId, cause });
+          this.queue.push(at(t, e.delayMs), {
+            kind: "timer",
+            node: r.id,
+            key: e.key,
+            timerId,
+            cause,
+          });
           break;
         }
         case "cancelTimer":
