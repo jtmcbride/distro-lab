@@ -42,16 +42,22 @@ export interface Observable {
   onStep(listener: () => void): void;
 }
 
-/** Runs invariants after every step and collects violations. */
+/**
+ * Runs invariants after every step and collects violations. A condition that persists
+ * across steps is reported once, at the step where it first appeared.
+ */
 export class InvariantMonitor<View> {
   readonly violations: Violation[] = [];
+  private readonly seen = new Set<string>();
+  private readonly sim: Observable;
+  private readonly invariants: readonly Invariant<View>[];
+  /** Stop recording after this many violations (the first is usually the interesting one). */
+  private readonly limit: number;
 
-  constructor(
-    private readonly sim: Observable,
-    private readonly invariants: readonly Invariant<View>[],
-    /** Stop recording after this many violations (the first is usually the interesting one). */
-    private readonly limit = 100,
-  ) {
+  constructor(sim: Observable, invariants: readonly Invariant<View>[], limit = 100) {
+    this.sim = sim;
+    this.invariants = invariants;
+    this.limit = limit;
     this.check();
     sim.onStep(() => this.check());
   }
@@ -77,6 +83,9 @@ export class InvariantMonitor<View> {
     };
     for (const inv of this.invariants) {
       inv.check(snapshot, (message, nodes) => {
+        const key = `${inv.name}\n${message}`;
+        if (this.seen.has(key)) return;
+        this.seen.add(key);
         this.violations.push({
           invariant: inv.name,
           message,

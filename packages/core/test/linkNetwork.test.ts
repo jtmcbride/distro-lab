@@ -90,6 +90,24 @@ describe("LinkNetwork topology changes", () => {
     expect(connected(net)).toHaveLength(20);
   });
 
+  it("changes every link at once", () => {
+    const net = new LinkNetwork(NODES);
+    net.apply({ type: "setAll", latencyMs: 70, loss: 0.5 });
+    for (const f of NODES) {
+      for (const t of NODES)
+        if (f !== t) expect(net.link(f, t)).toMatchObject({ latencyMs: 70, loss: 0.5 });
+    }
+  });
+
+  it("restores links and partitions to their initial state", () => {
+    const net = new LinkNetwork(NODES, { links: [{ from: "A", to: "B", latencyMs: 99 }] });
+    net.apply({ type: "setLink", from: "A", to: "B", latencyMs: 5, up: false });
+    net.apply({ type: "isolate", node: "C" });
+    net.apply({ type: "restore" });
+    expect(connected(net)).toHaveLength(20);
+    expect(net.link("A", "B").latencyMs).toBe(99);
+  });
+
   it("isolates a node on top of an existing partition", () => {
     const net = new LinkNetwork(NODES);
     net.apply({ type: "partition", groups: [["A", "B", "C"]] });

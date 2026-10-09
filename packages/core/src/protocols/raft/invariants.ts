@@ -84,13 +84,23 @@ function followsRealLeader(): Invariant<RaftView> {
     name: "follows-real-leader",
     check(s, report) {
       for (const n of s.nodes) {
-        if (n.up && n.view.role === "leader") leaderOf.set(n.view.term, n.id);
+        // First leader seen wins; a second one is election-safety's to report.
+        if (n.up && n.view.role === "leader" && !leaderOf.has(n.view.term)) {
+          leaderOf.set(n.view.term, n.id);
+        }
       }
       for (const n of s.nodes) {
         const l = n.view.leaderId;
-        if (!n.up || l === null) continue;
-        if (leaderOf.get(n.view.term) !== l) {
+        if (!n.up || l === null || n.view.role === "leader") continue;
+        const actual = leaderOf.get(n.view.term);
+        if (actual === undefined) {
           report(`${n.id} follows ${l} in term ${n.view.term}, which ${l} never led`, [n.id, l]);
+        } else if (actual !== l) {
+          report(`${n.id} follows ${l} in term ${n.view.term}, which ${actual} led first`, [
+            n.id,
+            l,
+            actual,
+          ]);
         }
       }
     },

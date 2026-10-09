@@ -44,6 +44,10 @@ export type NetworkChange =
   | { readonly type: "isolate"; readonly node: NodeId }
   /** Removes all partitions and isolations; per-link settings are kept. */
   | { readonly type: "heal" }
+  /** Applies the same settings to every link (e.g. a network-wide slowdown). */
+  | ({ readonly type: "setAll" } & Partial<LinkConfig>)
+  /** Heals and resets every link to its configuration at construction. */
+  | { readonly type: "restore" }
   /** Changes one directed link, or both directions if `bidirectional`. */
   | ({
       readonly type: "setLink";
@@ -75,6 +79,7 @@ export class LinkNetwork implements Network<NetworkChange> {
   private readonly links = new Map<string, LinkConfig>();
   /** Directed links currently cut by a partition or isolation. */
   private readonly blocked = new Set<string>();
+  private readonly initial: ReadonlyMap<string, LinkConfig>;
 
   constructor(nodes: readonly NodeId[], config: LinkNetworkConfig = {}) {
     this.nodes = [...nodes];
@@ -83,6 +88,7 @@ export class LinkNetwork implements Network<NetworkChange> {
       for (const to of nodes) if (from !== to) this.links.set(key(from, to), defaults);
     }
     for (const o of config.links ?? []) this.update(o.from, o.to, o);
+    this.initial = new Map(this.links);
   }
 
   link(from: NodeId, to: NodeId): LinkConfig {
@@ -149,6 +155,18 @@ export class LinkNetwork implements Network<NetworkChange> {
       case "heal":
         this.blocked.clear();
         return;
+      case "restore":
+        this.blocked.clear();
+        for (const [k, v] of this.initial) this.links.set(k, v);
+        return;
+      case "setAll": {
+        const { type: _t, ...settings } = change;
+        for (const k of this.links.keys()) {
+          const [from, to] = k.split("->") as [NodeId, NodeId];
+          this.update(from, to, settings);
+        }
+        return;
+      }
       case "setLink": {
         const { type: _t, from, to, bidirectional, ...settings } = change;
         this.update(from, to, settings);

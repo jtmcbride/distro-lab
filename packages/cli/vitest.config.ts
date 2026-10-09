@@ -3,7 +3,6 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
   test: {
     include: ["test/**/*.test.ts"],
-    // Chaos tests run hundreds of full simulations.
     testTimeout: 60_000,
   },
 });

@@ -58,8 +58,11 @@ export class TraceRecorder {
   readonly records: TraceRecord[] = [];
   private readonly hasher = new Hasher();
   private count = 0;
+  private readonly keep: boolean;
 
-  constructor(private readonly keep = true) {}
+  constructor(keep = true) {
+    this.keep = keep;
+  }
 
   readonly sink: TraceSink = (record) => {
     this.hasher.update(canonicalJson(record)).update("\n");

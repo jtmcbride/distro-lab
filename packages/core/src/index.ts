@@ -22,6 +22,7 @@ export {
 export {
   Simulation,
   type Action,
+  type RunnableSimulation,
   type ScheduledAction,
   type SimulationOptions,
 } from "./simulation.ts";
@@ -34,3 +35,17 @@ export {
   type Violation,
 } from "./invariants.ts";
 export * as Raft from "./protocols/raft/index.ts";
+export {
+  defineProtocol,
+  failed,
+  failureKind,
+  runScenario,
+  SCENARIO_VERSION,
+  type ProtocolEntry,
+  type RunResult,
+  type Scenario,
+} from "./harness/scenario.ts";
+export { generateScenario, type GenerateOptions } from "./harness/generate.ts";
+export { minimizeScenario } from "./harness/minimize.ts";
+export { fuzz, type FuzzFailure, type FuzzOptions, type FuzzReport } from "./harness/fuzz.ts";
+export { defaultRegistry } from "./harness/registry.ts";

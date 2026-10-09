@@ -22,7 +22,11 @@ export interface Network<Change = never> {
 
 /** Lossless network with a fixed delay. Useful for tests and as a baseline. */
 export class FixedLatencyNetwork implements Network {
-  constructor(private readonly delayMs: number) {}
+  private readonly delayMs: number;
+
+  constructor(delayMs: number) {
+    this.delayMs = delayMs;
+  }
 
   onSend(): SendOutcome {
     return { delays: [this.delayMs] };

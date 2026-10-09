@@ -70,6 +70,14 @@ describe("Raft invariants", () => {
     ).toEqual([]);
   });
 
+  it("report a persisting violation once", () => {
+    const twoLeaders = {
+      A: { role: "leader" as const, term: 2, votedFor: "A", leaderId: "A" },
+      B: { role: "leader" as const, term: 2, votedFor: "B", leaderId: "B" },
+    };
+    expect(replay([twoLeaders, twoLeaders, twoLeaders])).toEqual(["election-safety@0"]);
+  });
+
   it("flag a second vote in the same term, including after a restart", () => {
     expect(
       replay([
