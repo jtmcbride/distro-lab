@@ -17,7 +17,11 @@ export function App() {
   const [seed, setSeed] = useState(1);
   const [protocol, setProtocol] = useState("raft");
   const result = useMemo<RunResult>(
-    () => runScenario(registry, scenarioForSeed(registry, seed, { protocol }), { keepTrace: true }),
+    () =>
+      runScenario(registry, scenarioForSeed(registry, seed, { protocol }), {
+        keepTrace: true,
+        keepState: true,
+      }),
     [seed, protocol],
   );
   const firstBad = result.violations[0]?.recordId;
@@ -34,8 +38,8 @@ export function App() {
       <h1>Distributed Systems Lab</h1>
       <p className="lede">
         A deterministic simulator for building, breaking and debugging distributed protocols. This
-        page is a placeholder: it runs one randomly generated fault scenario against Raft leader
-        election, entirely in your browser.
+        page is a placeholder: it runs one randomly generated fault scenario, with client traffic,
+        against a Raft-replicated key-value store, entirely in your browser.
       </p>
 
       <section className="controls">
@@ -93,6 +97,18 @@ export function App() {
           ))}
         </ul>
       )}
+
+      <h2>Final state</h2>
+      <pre className="trace">
+        {(result.finalState ?? [])
+          .map((p) => {
+            const format = registry.get(protocol)?.formatView;
+            const view =
+              p.role === "server" && format !== undefined ? format(p.view) : JSON.stringify(p.view);
+            return `${p.id.padEnd(4)} ${p.up ? "up  " : "DOWN"} ${view}`;
+          })
+          .join("\n")}
+      </pre>
 
       <h2>Trace (sends and deliveries hidden)</h2>
       <pre className="trace">
