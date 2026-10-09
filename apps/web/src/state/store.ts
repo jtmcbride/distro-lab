@@ -5,6 +5,10 @@ import { trace } from "./trace.ts";
 export interface SimState {
   readonly loaded: boolean;
   readonly protocol: string;
+  /** Display name of the loaded scenario. */
+  readonly scenarioName: string;
+  /** After an import or share link, jump to the first violation once one is known. */
+  readonly jumpToViolation: boolean;
   /** Protocol config of the loaded scenario (e.g. Raft timeouts). */
   readonly config: CanonicalValue | undefined;
   readonly now: number;
@@ -22,11 +26,15 @@ export interface SimState {
   /** UI selection: a process id and/or a trace record id. */
   readonly selectedProcess: string | null;
   readonly selectedRecord: number | null;
+  /** Selection to apply when the next reset frame arrives (e.g. after seeking to it). */
+  readonly pendingSelection: { record: number; process: string | null } | null;
 }
 
 export const useSim = create<SimState>(() => ({
   loaded: false,
   protocol: "raft",
+  scenarioName: "",
+  jumpToViolation: false,
   config: undefined,
   now: 0,
   durationMs: 0,
@@ -41,6 +49,7 @@ export const useSim = create<SimState>(() => ({
   error: null,
   selectedProcess: null,
   selectedRecord: null,
+  pendingSelection: null,
 }));
 
 /** Folds a worker frame into the store and the shared trace. */
@@ -60,6 +69,14 @@ export function applyFrame(frame: Frame): void {
     violations: frame.reset ? frame.violations : [...s.violations, ...frame.violations],
     traceVersion: frame.reset || frame.records.length > 0 ? s.traceVersion + 1 : s.traceVersion,
     error: null,
-    ...(frame.reset ? { selectedRecord: null } : {}),
+    ...(frame.reset
+      ? s.pendingSelection === null
+        ? { selectedRecord: null }
+        : {
+            selectedRecord: s.pendingSelection.record,
+            selectedProcess: s.pendingSelection.process,
+            pendingSelection: null,
+          }
+      : {}),
   }));
 }

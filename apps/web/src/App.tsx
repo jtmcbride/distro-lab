@@ -1,4 +1,3 @@
-import { useEffect, useState } from "react";
 import { ClusterView } from "./components/ClusterView.tsx";
 import { EventList } from "./components/EventList.tsx";
 import { Inspector } from "./components/Inspector.tsx";
@@ -7,35 +6,20 @@ import { RecordDetail } from "./components/RecordDetail.tsx";
 import { SpaceTime } from "./components/SpaceTime.tsx";
 import { Tools } from "./components/Tools.tsx";
 import { PlaybackBar } from "./components/PlaybackBar.tsx";
-import { SCENARIO_CHOICES } from "./scenarios.ts";
-import { sim } from "./sim/client.ts";
+import { ScenarioMenu } from "./components/ScenarioMenu.tsx";
+import { Violations } from "./components/Violations.tsx";
 import { useSim } from "./state/store.ts";
 
 export function App() {
-  const [choice, setChoice] = useState(SCENARIO_CHOICES[0]!.id);
   const { error } = useSim();
-
-  useEffect(() => {
-    const c = SCENARIO_CHOICES.find((x) => x.id === choice) ?? SCENARIO_CHOICES[0]!;
-    sim.load(c.make());
-  }, [choice]);
-
   return (
     <div className="app">
       <header className="topbar">
         <h1>Distributed Systems Lab</h1>
-        <label>
-          Scenario
-          <select value={choice} onChange={(e) => setChoice(e.target.value)}>
-            {SCENARIO_CHOICES.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.label}
-              </option>
-            ))}
-          </select>
-        </label>
+        <ScenarioMenu />
       </header>
       <PlaybackBar />
+      <Violations />
       {error !== null && <p className="error">Simulation error: {error}</p>}
       <main className="workspace">
         <section className="panel cluster" aria-label="Cluster">

@@ -781,3 +781,77 @@ pre.payload {
 .partition-row strong {
   width: 2.5em;
 }
+
+.scenario-menu {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.scenario-menu select {
+  max-width: 22em;
+}
+
+.popover {
+  position: relative;
+}
+
+.popover summary {
+  list-style: none;
+  cursor: pointer;
+  font-size: 0.9rem;
+  padding: 5px 9px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel-2);
+}
+
+.popover summary::-webkit-details-marker {
+  display: none;
+}
+
+.popover-body {
+  position: absolute;
+  right: 0;
+  z-index: 10;
+  margin-top: 4px;
+  width: 280px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.15);
+}
+
+.notice {
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.violations {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  align-items: center;
+  padding: 8px 12px;
+  border: 1px solid var(--bad);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bad) 10%, var(--panel));
+  font-size: 0.85rem;
+}
+
+.violations strong {
+  color: var(--bad);
+}
+
+.violations ul {
+  flex-basis: 100%;
+  margin: 0;
+  padding-left: 18px;
+  max-height: 160px;
+  overflow: auto;
+}

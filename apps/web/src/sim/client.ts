@@ -9,9 +9,22 @@ let nextRequest = 0;
 worker.onmessage = (event: MessageEvent<FromWorker>) => {
   const m = event.data;
   switch (m.type) {
-    case "frame":
+    case "frame": {
       applyFrame(m.frame);
+      const s = useSim.getState();
+      if (s.jumpToViolation && m.frame.reset && m.frame.now > 0) {
+        useSim.setState({ jumpToViolation: false });
+        const first = s.violations[0];
+        if (first !== undefined) {
+          // Applied by the reset frame the seek produces.
+          useSim.setState({
+            pendingSelection: { record: first.recordId, process: first.nodes[0] ?? null },
+          });
+          sim.seek(first.t);
+        }
+      }
       break;
+    }
     case "scenario":
       exports.get(m.requestId)?.(m.scenario);
       exports.delete(m.requestId);
@@ -26,8 +39,14 @@ const send = (message: ToWorker) => worker.postMessage(message);
 
 /** Commands for the simulation running in the worker. */
 export const sim = {
-  load(scenario: Scenario) {
+  /**
+   * Loads a scenario. With `jumpToViolation`, it is run to its end and, if a safety
+   * violation occurs, rewound to the first one (how fuzz failure files are opened).
+   */
+  load(scenario: Scenario, name = "Scenario", options: { jumpToViolation?: boolean } = {}) {
     useSim.setState({
+      scenarioName: name,
+      jumpToViolation: options.jumpToViolation === true,
       protocol: scenario.protocol,
       config: scenario.config,
       durationMs: scenario.durationMs,
@@ -35,6 +54,7 @@ export const sim = {
       selectedRecord: null,
     });
     send({ type: "load", scenario });
+    if (options.jumpToViolation === true) send({ type: "seek", timeMs: scenario.durationMs });
   },
   play: () => send({ type: "play" }),
   pause: () => send({ type: "pause" }),
