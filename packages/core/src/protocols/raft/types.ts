@@ -127,4 +127,6 @@ export type RaftView = {
   /** The node's log (shared with its state, not copied; do not mutate or retain). */
   readonly log: readonly RaftLogEntry[];
   readonly data: Readonly<Record<string, string>>;
+  /** Highest applied request seq per client (the exactly-once session table). */
+  readonly sessions: Readonly<Record<NodeId, number>>;
 };

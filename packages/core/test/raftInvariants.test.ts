@@ -20,6 +20,7 @@ const base: View = {
   lastApplied: 0,
   log: [],
   data: {},
+  sessions: {},
 };
 
 type NodeState = Partial<View> & { up?: boolean; incarnation?: number };

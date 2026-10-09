@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import { ClusterView } from "./components/ClusterView.tsx";
+import { Inspector } from "./components/Inspector.tsx";
+import { LogGrid } from "./components/LogGrid.tsx";
 import { PlaybackBar } from "./components/PlaybackBar.tsx";
 import { SCENARIO_CHOICES } from "./scenarios.ts";
 import { sim } from "./sim/client.ts";
@@ -40,7 +42,11 @@ export function App() {
         </section>
         <section className="panel inspector" aria-label="Inspector">
           <h2>Inspector</h2>
-          <p className="muted">Select a node.</p>
+          <Inspector />
+        </section>
+        <section className="panel logs" aria-label="Replicated logs">
+          <h2>Replicated logs</h2>
+          <LogGrid />
         </section>
         <section className="panel timeline" aria-label="Timeline">
           <h2>Events</h2>
