@@ -25,3 +25,4 @@ export {
   type ScheduledAction,
   type SimulationOptions,
 } from "./simulation.ts";
+export * as Raft from "./protocols/raft/index.ts";
