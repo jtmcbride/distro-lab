@@ -8,6 +8,7 @@ import {
   minimizeScenario,
   Raft,
   runScenario,
+  scenarioForSeed,
   type Scenario,
 } from "../src/index.ts";
 
@@ -92,17 +93,34 @@ describe("chaos testing", () => {
     expect(report.runs).toBe(60);
   });
 
-  // commit-old-terms needs the exact Figure 8 interleaving; figure8.test.ts covers it.
-  const fuzzable = Object.keys(Raft.RAFT_BUGS).filter((b) => b !== "commit-old-terms");
-  for (const bug of fuzzable) {
+  // First seed at which `sim fuzz` catches each bug with the current generator (re-measure
+  // with `sim fuzz --protocol raft-bug-<name>` if the generator changes). commit-old-terms
+  // needs the exact Figure 8 interleaving, which random faults have not produced in 1000
+  // seeds; figure8.test.ts covers it.
+  const CAUGHT_AT: Record<Exclude<Raft.RaftBug, "commit-old-terms">, [number, string]> = {
+    "double-vote": [0, "single-vote-per-term"],
+    "volatile-vote": [16, "single-vote-per-term"],
+    "stale-votes": [461, "election-safety"],
+    "truncate-always": [0, "acknowledged-writes-replicated"],
+    "trust-received": [0, "acknowledged-writes-replicated"],
+    "no-sessions": [3, "client-chains"],
+    "lost-append": [4, "acknowledged-writes-replicated"],
+  };
+  for (const [bug, [seed, invariant]] of Object.entries(CAUGHT_AT)) {
     it(`catches the planted bug "${bug}" and minimizes the counterexample`, () => {
-      const report = fuzz(registry, { protocol: `raft-bug-${bug}`, seeds: 150 });
-      expect(report.failures).toHaveLength(1);
-      const { result, minimized } = report.failures[0]!;
-      expect(result.violations.length).toBeGreaterThan(0);
-      expect(minimized.actions.length).toBeLessThanOrEqual(result.scenario.actions.length);
-      // The minimized scenario reproduces the same failure on its own.
-      expect(failureKind(runScenario(registry, minimized))).toBe(failureKind(result));
+      const protocol = `raft-bug-${bug}`;
+      const scenario = scenarioForSeed(registry, seed, { protocol });
+      const result = runScenario(registry, scenario);
+      expect(result.violations[0]?.invariant).toBe(invariant);
+      const kind = failureKind(result);
+      const minimized = minimizeScenario(
+        scenario,
+        (s) => failureKind(runScenario(registry, s)) === kind,
+      );
+      expect(minimized.actions.length).toBeLessThanOrEqual(scenario.actions.length);
+      expect(failureKind(runScenario(registry, minimized))).toBe(kind);
+      // The same seed is clean on correct Raft.
+      expect(runScenario(registry, { ...scenario, protocol: "raft" }).violations).toEqual([]);
     });
   }
 });

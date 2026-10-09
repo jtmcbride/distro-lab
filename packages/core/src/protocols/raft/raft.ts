@@ -277,9 +277,12 @@ export function raft(
     const v = s.volatile;
     if (v.role !== "leader" || m.term !== s.persistent.currentTerm) return;
     const match = v.matchIndex[from] ?? 0;
+    // Follow-up sends happen only when a response makes progress. Duplicated or stale
+    // responses must not trigger sends: each would yield more responses, and with message
+    // duplication the traffic grows without bound. Heartbeats cover retransmission.
     if (m.success) {
-      // max(): responses can arrive reordered or duplicated.
-      v.matchIndex[from] = Math.max(match, m.matchIndex);
+      if (m.matchIndex <= match) return;
+      v.matchIndex[from] = m.matchIndex;
       v.nextIndex[from] = Math.max(v.nextIndex[from] ?? 1, m.matchIndex + 1);
       advanceCommit(ctx, s);
       if (v.nextIndex[from]! <= lastLogIndex(s)) sendAppend(ctx, s, from);
@@ -305,7 +308,9 @@ export function raft(
     }
     // Never go below what the follower has already confirmed, and never move forward on a
     // rejection (it may be a late reply to an older request).
-    v.nextIndex[from] = Math.max(match + 1, Math.min(current, next));
+    const updated = Math.max(match + 1, Math.min(current, next));
+    if (updated === current) return;
+    v.nextIndex[from] = updated;
     sendAppend(ctx, s, from);
   }
 

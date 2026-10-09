@@ -6,8 +6,8 @@ import {
   defaultRegistry,
   formatRecord,
   fuzz,
-  generateScenario,
   runScenario,
+  scenarioForSeed,
   type RunResult,
   type Scenario,
 } from "@distro-lab/core";
@@ -71,12 +71,11 @@ export function main(argv: readonly string[], io: Io = nodeIo): number {
           args: rest,
           options: { seed: { type: "string" }, protocol: { type: "string", default: "raft" } },
         });
-        const entry = registry.get(values.protocol);
-        if (entry === undefined) throw new UsageError(`unknown protocol "${values.protocol}"`);
-        const scenario = generateScenario(int(values.seed, "seed", 0), {
+        if (!registry.has(values.protocol)) {
+          throw new UsageError(`unknown protocol "${values.protocol}"`);
+        }
+        const scenario = scenarioForSeed(registry, int(values.seed, "seed", 0), {
           protocol: values.protocol,
-          workload: entry.workload,
-          randomConfig: entry.randomConfig,
         });
         io.out(JSON.stringify(scenario, null, 2));
         return 0;

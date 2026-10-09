@@ -9,6 +9,24 @@ import {
   type Scenario,
 } from "./scenario.ts";
 
+/**
+ * The scenario a fuzz run uses for `seed`: generated with the protocol's own workload and
+ * random settings from the registry.
+ */
+export function scenarioForSeed(
+  registry: ReadonlyMap<string, ProtocolEntry>,
+  seed: number,
+  options: GenerateOptions,
+): Scenario {
+  const entry = registry.get(options.protocol);
+  if (entry === undefined) throw new Error(`unknown protocol "${options.protocol}"`);
+  return generateScenario(seed, {
+    ...options,
+    workload: entry.workload,
+    randomConfig: entry.randomConfig,
+  });
+}
+
 export interface FuzzOptions extends GenerateOptions {
   readonly firstSeed?: number;
   readonly seeds: number;
@@ -39,13 +57,7 @@ export function fuzz(
   let events = 0;
   let runs = 0;
   for (let seed = first; seed < first + options.seeds; seed++) {
-    const entry = registry.get(options.protocol);
-    const scenario = generateScenario(seed, {
-      ...options,
-      workload: entry?.workload,
-      randomConfig: entry?.randomConfig,
-    });
-    const result = runScenario(registry, scenario);
+    const result = runScenario(registry, scenarioForSeed(registry, seed, options));
     runs++;
     events += result.events;
     if (failed(result)) {

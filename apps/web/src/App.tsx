@@ -1,9 +1,9 @@
 import { useMemo, useState } from "react";
 import {
   formatRecord,
-  generateScenario,
   defaultRegistry,
   runScenario,
+  scenarioForSeed,
   type RunResult,
 } from "@distro-lab/core";
 
@@ -17,7 +17,7 @@ export function App() {
   const [seed, setSeed] = useState(1);
   const [protocol, setProtocol] = useState("raft");
   const result = useMemo<RunResult>(
-    () => runScenario(registry, generateScenario(seed, { protocol }), { keepTrace: true }),
+    () => runScenario(registry, scenarioForSeed(registry, seed, { protocol }), { keepTrace: true }),
     [seed, protocol],
   );
   const firstBad = result.violations[0]?.recordId;

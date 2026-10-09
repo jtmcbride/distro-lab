@@ -49,7 +49,13 @@ export {
 } from "./harness/scenario.ts";
 export { generateScenario, type GenerateOptions, type Workload } from "./harness/generate.ts";
 export { minimizeScenario } from "./harness/minimize.ts";
-export { fuzz, type FuzzFailure, type FuzzOptions, type FuzzReport } from "./harness/fuzz.ts";
+export {
+  fuzz,
+  scenarioForSeed,
+  type FuzzFailure,
+  type FuzzOptions,
+  type FuzzReport,
+} from "./harness/fuzz.ts";
 export { defaultRegistry } from "./harness/registry.ts";
 export {
   DEFAULT_REQUEST_CLIENT_CONFIG,
