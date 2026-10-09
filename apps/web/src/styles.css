@@ -150,6 +150,7 @@ button.primary {
   grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
   grid-template-areas:
     "cluster inspector"
+    "diagram diagram"
     "logs logs"
     "timeline timeline";
   gap: 12px;
@@ -161,6 +162,7 @@ button.primary {
     grid-template-areas:
       "cluster"
       "inspector"
+      "diagram"
       "logs"
       "timeline";
   }
@@ -573,4 +575,64 @@ table.log-grid {
 }
 .term-7 {
   --tc: #65a30d;
+}
+
+.diagram {
+  grid-area: diagram;
+}
+
+.diagram-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(220px, 300px);
+  gap: 12px;
+}
+
+@media (max-width: 900px) {
+  .diagram-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.spacetime-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  font-size: 0.8rem;
+  margin-bottom: 6px;
+}
+
+.spacetime-canvas {
+  width: 100%;
+  overflow: hidden;
+}
+
+.spacetime-canvas canvas {
+  display: block;
+  cursor: crosshair;
+  touch-action: none;
+}
+
+.diagram-detail {
+  font-size: 0.82rem;
+  min-width: 0;
+}
+
+.record-detail p {
+  margin: 0 0 6px;
+}
+
+.outcomes {
+  margin: 0 0 6px;
+  padding-left: 18px;
+}
+
+pre.payload {
+  margin: 0;
+  max-height: 220px;
+  overflow: auto;
+  background: var(--panel-2);
+  border-radius: 6px;
+  padding: 8px;
+  font-size: 0.72rem;
 }
