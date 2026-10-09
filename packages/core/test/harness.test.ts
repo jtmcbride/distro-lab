@@ -132,7 +132,11 @@ describe("minimizeScenario", () => {
     expect(clientOps.length).toBeGreaterThan(0);
     const min = minimizeScenario(s, () => true);
     expect(min.actions.filter((a) => a.action.type === "client")).toEqual(clientOps);
-    expect(min.actions.every((a) => a.action.type === "client" || a.atMs >= s.durationMs - s.livenessAfterMs!)).toBe(true);
+    expect(
+      min.actions.every(
+        (a) => a.action.type === "client" || a.atMs >= s.durationMs - s.livenessAfterMs!,
+      ),
+    ).toBe(true);
   });
 
   it("drops every fault the predicate does not need, but keeps repairs", () => {
