@@ -25,4 +25,12 @@ export {
   type ScheduledAction,
   type SimulationOptions,
 } from "./simulation.ts";
+export {
+  InvariantMonitor,
+  type ClusterSnapshot,
+  type Invariant,
+  type NodeSnapshot,
+  type Observable,
+  type Violation,
+} from "./invariants.ts";
 export * as Raft from "./protocols/raft/index.ts";

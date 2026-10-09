@@ -82,6 +82,7 @@ export class Simulation<P, V, M, C = never, N = never> {
   private readonly queue = new EventQueue<Pending<C, N>>();
   private readonly runtimes = new Map<NodeId, NodeRuntime<P, V>>();
   private readonly sinks: TraceSink[];
+  private readonly stepListeners: (() => void)[] = [];
   private readonly actionLog: ScheduledAction<C, N>[] = [];
   private readonly seed: number;
   private clock = 0;
@@ -144,6 +145,19 @@ export class Simulation<P, V, M, C = never, N = never> {
     this.sinks.push(sink);
   }
 
+  /**
+   * Called after every processed event, once all of its effects are applied. This is the
+   * only point where cluster state is between atomic steps, so invariants belong here.
+   */
+  onStep(listener: () => void): void {
+    this.stepListeners.push(listener);
+  }
+
+  /** Id of the most recent trace record, or -1 before any. */
+  get lastRecordId(): number {
+    return this.nextRecordId - 1;
+  }
+
   isUp(node: NodeId): boolean {
     return this.runtime(node).up;
   }
@@ -193,6 +207,7 @@ export class Simulation<P, V, M, C = never, N = never> {
         this.fireTimer(ev.node, ev.key, ev.timerId, ev.cause);
         break;
     }
+    for (const listener of this.stepListeners) listener();
     return true;
   }
 

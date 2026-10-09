@@ -1,2 +1,3 @@
 export { raft } from "./raft.ts";
 export * from "./types.ts";
+export { raftInvariants } from "./invariants.ts";
