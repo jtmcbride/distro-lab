@@ -161,6 +161,19 @@ test("a what-if branch without a crash avoids the Figure 8 bug", async ({ page }
   await page.getByRole("button", { name: "Remove crash E at 400.0 ms" }).click();
   await seek(page, 1400);
   await expect(page.locator(".violations")).toHaveCount(0);
+
+  // Compare with the original: it diverges where the crash was removed.
+  await page.locator(".branches").getByRole("button", { name: "Compare" }).click();
+  const compare = page.locator(".compare");
+  await expect(compare.locator(".fields")).toContainText("crash E");
+  await expect(compare.locator("tr.differs", { hasText: "Safety violations" })).toContainText(
+    "leader-completeness",
+  );
+  await compare.getByRole("button", { name: "Jump here" }).click();
+  await expect(page.locator(".clock")).toContainText("400.0 ms");
+  await expect(page.locator(".event-row.selected")).toHaveCount(1);
+  await seek(page, 1400);
+
   // The original branch, at the same moment, still has the violation.
   await page.locator(".branch-chip").first().getByRole("button").first().click();
   await expect(page.locator(".violations")).toContainText("leader-completeness");

@@ -4,7 +4,13 @@ import { formatMs } from "./PlaybackBar.tsx";
 
 /** Branch switcher: what-if variants of the scenario forked at some moment. */
 export function BranchBar() {
-  const { branches, branch } = useSim();
+  const { branches, branch, compareWith } = useSim();
+  const current = branches.find((b) => b.id === branch);
+  // Compare with the parent by default (the branch this what-if departs from).
+  const defaultOther =
+    branches.find((b) => b.id === current?.parent)?.id ??
+    branches.find((b) => b.id !== branch)?.id ??
+    null;
   const nameOf = (id: number | null) => branches.find((b) => b.id === id)?.name ?? "deleted";
   return (
     <div className="branches" role="toolbar" aria-label="Branches">
@@ -40,6 +46,20 @@ export function BranchBar() {
           )}
         </span>
       ))}
+      {branches.length > 1 && (
+        <button
+          type="button"
+          aria-pressed={compareWith !== null}
+          onClick={() =>
+            useSim.setState({
+              compareWith: compareWith !== null ? null : defaultOther,
+            })
+          }
+          title="Compare this branch with another one at the same moment"
+        >
+          Compare
+        </button>
+      )}
       <button
         type="button"
         onClick={() => sim.fork()}

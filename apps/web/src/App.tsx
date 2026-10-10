@@ -7,6 +7,7 @@ import { SpaceTime } from "./components/SpaceTime.tsx";
 import { Tools } from "./components/Tools.tsx";
 import { PlaybackBar } from "./components/PlaybackBar.tsx";
 import { BranchBar } from "./components/BranchBar.tsx";
+import { ComparePanel } from "./components/ComparePanel.tsx";
 import { ScenarioMenu } from "./components/ScenarioMenu.tsx";
 import { Violations } from "./components/Violations.tsx";
 import { useSim } from "./state/store.ts";
@@ -21,6 +22,7 @@ export function App() {
       </header>
       <PlaybackBar />
       <BranchBar />
+      <ComparePanel />
       <Violations />
       {error !== null && <p className="error">Simulation error: {error}</p>}
       <main className="workspace">

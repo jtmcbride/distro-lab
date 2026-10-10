@@ -1,9 +1,16 @@
-import type { Action, CanonicalValue, Scenario, ScenarioAction } from "@distro-lab/core";
+import type {
+  Action,
+  CanonicalValue,
+  Comparison,
+  Scenario,
+  ScenarioAction,
+} from "@distro-lab/core";
 import { applyFrame, useSim } from "../state/store.ts";
 import type { FromWorker, ToWorker } from "./protocol.ts";
 
 const worker = new Worker(new URL("./worker.ts", import.meta.url), { type: "module" });
 const exports = new Map<number, (s: Scenario) => void>();
+const comparisons = new Map<number, (c: Comparison) => void>();
 let nextRequest = 0;
 // Scrubbing sends at most one seek per frame: later positions wait for the previous one.
 let scrubBusy = false;
@@ -36,6 +43,10 @@ worker.onmessage = (event: MessageEvent<FromWorker>) => {
     case "scenario":
       exports.get(m.requestId)?.(m.scenario);
       exports.delete(m.requestId);
+      break;
+    case "comparison":
+      comparisons.get(m.requestId)?.(m.comparison);
+      comparisons.delete(m.requestId);
       break;
     case "error":
       useSim.setState({ error: m.message });
@@ -91,6 +102,14 @@ export const sim = {
   renameBranch: (id: number, name: string) => send({ type: "renameBranch", id, name }),
   /** Replaces the current branch's actions (only ones that have not run may change). */
   editActions: (actions: readonly ScenarioAction[]) => send({ type: "editActions", actions }),
+  /** The current branch next to `other` at the current time. */
+  compare(other: number): Promise<Comparison> {
+    const requestId = nextRequest++;
+    return new Promise((resolve) => {
+      comparisons.set(requestId, resolve);
+      send({ type: "compare", requestId, other });
+    });
+  },
   /** The current scenario including live actions. */
   exportScenario(): Promise<Scenario> {
     const requestId = nextRequest++;

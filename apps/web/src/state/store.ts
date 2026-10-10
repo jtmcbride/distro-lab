@@ -32,6 +32,8 @@ export interface SimState {
   readonly branch: number;
   /** The current branch's scenario actions. */
   readonly actions: readonly ScenarioAction[];
+  /** Branch shown in the comparison panel, if open. */
+  readonly compareWith: number | null;
   /** Bumped whenever `trace` changes. */
   readonly traceVersion: number;
   readonly error: string | null;
@@ -60,6 +62,7 @@ export const useSim = create<SimState>(() => ({
   branches: [],
   branch: 0,
   actions: [],
+  compareWith: null,
   traceVersion: 0,
   error: null,
   selectedProcess: null,
@@ -88,7 +91,12 @@ export function applyFrame(frame: Frame): void {
     traceVersion: rewound || frame.records.length > 0 ? s.traceVersion + 1 : s.traceVersion,
     error: null,
     branch: frame.branch,
+    // Switching to the branch being compared with swaps the two.
+    ...(frame.branch !== s.branch && s.compareWith === frame.branch
+      ? { compareWith: s.branch }
+      : {}),
     ...(frame.branches === null ? {} : { branches: frame.branches }),
+    ...(frame.reset ? { compareWith: null } : {}),
     ...(frame.actions === null ? {} : { actions: frame.actions }),
     ...(frame.jumped && s.pendingSelection !== null
       ? {

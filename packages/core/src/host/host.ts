@@ -87,6 +87,35 @@ export interface BranchInfo {
   readonly actions: readonly ScenarioAction[];
 }
 
+/** What a branch looks like at one moment, for comparisons. */
+export interface BranchOutcome {
+  readonly branch: number;
+  readonly events: number;
+  readonly records: number;
+  readonly violations: readonly Violation[];
+  /** Number of annotations by label (elections, leader changes, completed requests...). */
+  readonly annotations: Readonly<Record<string, number>>;
+}
+
+/** Two branches side by side at the same virtual time. */
+export interface Comparison {
+  readonly t: number;
+  /** Id of the first record that differs (or that only one branch has); null if none. */
+  readonly divergence: number | null;
+  /** That record in each branch (null where the branch has none). */
+  readonly divergent: readonly [TraceRecord | null, TraceRecord | null];
+  /** Top-level view fields that differ, per process. */
+  readonly processes: readonly {
+    readonly id: NodeId;
+    readonly up: readonly [boolean, boolean];
+    readonly fields: readonly {
+      readonly key: string;
+      readonly values: readonly [CanonicalValue, CanonicalValue];
+    }[];
+  }[];
+  readonly outcomes: readonly [BranchOutcome, BranchOutcome];
+}
+
 interface Timeline {
   readonly id: number;
   name: string;
@@ -274,6 +303,89 @@ export class SimulationHost {
     this.tl.actions = normalized;
     this.branchesDirty = true;
     this.forgetFuture();
+  }
+
+  /**
+   * Compares the current branch with another one at the current time. The other branch is
+   * run in a separate simulation, so the current one is not disturbed.
+   */
+  compare(id: number): Comparison {
+    const other = this.timeline(id);
+    const t = this.sim.now;
+    const mine = {
+      trace: this.tl.trace.slice(0, this.sim.lastRecordId + 1),
+      sim: this.sim,
+      monitor: this.monitor,
+    };
+    const theirs = other === this.tl ? mine : this.runElsewhere(other, t);
+    let divergence: number | null = null;
+    const n = Math.max(mine.trace.length, theirs.trace.length);
+    for (let i = 0; i < n && divergence === null; i++) {
+      const a = mine.trace[i];
+      const b = theirs.trace[i];
+      if (a === b) continue;
+      if (a === undefined || b === undefined) {
+        // After stepping, this branch may not have run every event at time t yet.
+        if ((a ?? b)!.t < t) divergence = i;
+        else break;
+      } else if (canonicalJson(a) !== canonicalJson(b)) divergence = i;
+    }
+    const ids = [...this.sim.nodeIds, ...this.sim.clientIds];
+    const processes = ids.flatMap((pid) => {
+      const va = this.sim.view(pid);
+      const vb = theirs.sim.view(pid);
+      const up = [this.sim.isUp(pid), theirs.sim.isUp(pid)] as const;
+      const fields = diffFields(va, vb);
+      return fields.length === 0 && up[0] === up[1] ? [] : [{ id: pid, up, fields }];
+    });
+    const outcome = (branch: number, run: typeof mine): BranchOutcome => {
+      const annotations: Record<string, number> = {};
+      for (const r of run.trace) {
+        if (r.type === "annotate") annotations[r.label] = (annotations[r.label] ?? 0) + 1;
+      }
+      return {
+        branch,
+        events: run.sim.eventCount,
+        records: run.trace.length,
+        violations: [...run.monitor.violations],
+        annotations,
+      };
+    };
+    return {
+      t,
+      divergence,
+      divergent:
+        divergence === null
+          ? [null, null]
+          : [mine.trace[divergence] ?? null, theirs.trace[divergence] ?? null],
+      processes,
+      outcomes: [outcome(this.tl.id, mine), outcome(other.id, theirs)],
+    };
+  }
+
+  /** Runs `timeline` to `t` in a fresh simulation from its nearest checkpoint. */
+  private runElsewhere(timeline: Timeline, t: number) {
+    let best: Checkpoint | undefined;
+    for (const cp of timeline.checkpoints.values()) {
+      if (cp.t <= t && (best === undefined || cp.events > best.events)) best = cp;
+    }
+    if (best === undefined) throw new Error("no checkpoint at the start of the run");
+    const start = best.recordId;
+    const trace = timeline.trace.slice(0, start + 1);
+    const { sim, monitor } = this.registry.get(this.base.protocol)!.build(
+      { ...this.base, actions: timeline.actions },
+      {
+        sinks: [
+          (r) => {
+            if (r.id > start) trace.push(r);
+          },
+        ],
+      },
+    );
+    loadCheckpoint(sim, monitor, best);
+    sim.setActions(timeline.actions);
+    sim.runUntil(t);
+    return { trace, sim, monitor };
   }
 
   private timeline(id: number): Timeline {
@@ -549,6 +661,26 @@ export class SimulationHost {
       if (e % this.tl.spacing !== 0) checkpoints.delete(e);
     }
   }
+}
+
+/** Top-level fields of two views that differ (the whole value if either is not an object). */
+function diffFields(
+  a: CanonicalValue,
+  b: CanonicalValue,
+): { key: string; values: [CanonicalValue, CanonicalValue] }[] {
+  const isObject = (v: CanonicalValue): v is { readonly [k: string]: CanonicalValue } =>
+    typeof v === "object" && v !== null && !Array.isArray(v);
+  if (!isObject(a) || !isObject(b)) {
+    return canonicalJson(a) === canonicalJson(b) ? [] : [{ key: "", values: [a, b] }];
+  }
+  const keys = [...new Set([...Object.keys(a), ...Object.keys(b)])].sort();
+  return keys.flatMap((key) => {
+    const va = a[key] ?? null;
+    const vb = b[key] ?? null;
+    return canonicalJson(va) === canonicalJson(vb)
+      ? []
+      : [{ key, values: [va, vb] as [CanonicalValue, CanonicalValue] }];
+  });
 }
 
 function isNotable(r: TraceRecord): boolean {

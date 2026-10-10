@@ -947,3 +947,59 @@ pre.payload {
   max-height: 160px;
   overflow: auto;
 }
+
+.compare-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+
+.compare-head h2 {
+  margin: 0;
+}
+
+.compare-head .icon {
+  margin-left: auto;
+}
+
+.compare-body {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 12px 20px;
+  margin-top: 8px;
+}
+
+.compare-body h3 {
+  font-size: 0.85rem;
+  margin: 0 0 6px;
+}
+
+.compare-state {
+  grid-column: 1 / -1;
+  overflow-x: auto;
+}
+
+.compare-table {
+  border-collapse: collapse;
+  font-size: 0.8rem;
+  width: 100%;
+}
+
+.compare-table th,
+.compare-table td {
+  text-align: left;
+  padding: 2px 8px 2px 0;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+
+.compare-table tr.differs td {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.compare .fields dd code,
+.compare-table code {
+  word-break: break-all;
+}

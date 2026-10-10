@@ -3,6 +3,7 @@ import {
   canonicalJson,
   defaultRegistry,
   NOTABLE_LABELS,
+  Raft,
   Rng,
   scenarioForSeed,
   SimulationHost,
@@ -239,5 +240,41 @@ describe("branches", () => {
         expectMatchesReplay(host, ui);
       }
     }
+  });
+});
+
+describe("comparing branches", () => {
+  it("finds where a what-if branch diverges and how the outcomes differ", () => {
+    const scenario = Raft.figure8Scenario("raft-bug-commit-old-terms");
+    const host = new SimulationHost(registry, scenario);
+    host.advanceTo(350);
+    const main = host.branch;
+    const branch = host.fork("no crash E");
+    const same = host.compare(main);
+    expect(same.divergence).toBeNull();
+    expect(same.processes).toEqual([]);
+
+    host.editActions(
+      host.scenario().actions.filter((a) => !(a.atMs === 400 && a.action.type === "crash")),
+    );
+    host.advanceTo(1400);
+    const before = host.frame();
+    const c = host.compare(main);
+    expect(c.t).toBe(1400);
+    const [mine, theirs] = c.divergent;
+    expect(theirs).toMatchObject({ type: "crash", node: "E", t: 400 });
+    expect(mine!.t).toBeGreaterThanOrEqual(400);
+    expect(c.outcomes[0]).toMatchObject({ branch, violations: [] });
+    expect(c.outcomes[1].branch).toBe(main);
+    expect(c.outcomes[1].violations[0]?.invariant).toBe("leader-completeness");
+    expect(c.processes.find((p) => p.id === "E")?.up).toEqual([true, true]);
+    expect(c.processes.length).toBeGreaterThan(0);
+    // The current run is untouched.
+    expect(host.branch).toBe(branch);
+    expect(host.now).toBe(1400);
+    const after = host.frame();
+    expect(after.truncateAfter).toBeNull();
+    expect(after.records).toEqual([]);
+    expect(after.events).toBe(before.events);
   });
 });

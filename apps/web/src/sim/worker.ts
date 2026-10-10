@@ -70,6 +70,13 @@ function handle(message: ToWorker): void {
     case "editActions":
       host.editActions(message.actions);
       break;
+    case "compare":
+      post({
+        type: "comparison",
+        requestId: message.requestId,
+        comparison: host.compare(message.other),
+      });
+      return;
     case "export":
       post({ type: "scenario", requestId: message.requestId, scenario: host.scenario() });
       return;
