@@ -1,3 +1,4 @@
+import type { CanonicalValue } from "./canonical.ts";
 import type { NodeId } from "./protocol.ts";
 import type { Rng } from "./rng.ts";
 
@@ -18,6 +19,8 @@ export interface Network<Change = never> {
   canDeliver(from: NodeId, to: NodeId, now: number): boolean;
   /** Applies a scheduled network action (partition, heal, latency change, ...). */
   apply(change: Change): void;
+  /** Optional plain-data description of the current network, for visualizations. */
+  view?(): CanonicalValue;
 }
 
 /** Lossless network with a fixed delay. Useful for tests and as a baseline. */

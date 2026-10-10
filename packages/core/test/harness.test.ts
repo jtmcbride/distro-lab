@@ -126,6 +126,19 @@ describe("chaos testing", () => {
 });
 
 describe("minimizeScenario", () => {
+  it("never removes client operations", () => {
+    const s = scenarioForSeed(registry, 3, { protocol: "raft" });
+    const clientOps = s.actions.filter((a) => a.action.type === "client");
+    expect(clientOps.length).toBeGreaterThan(0);
+    const min = minimizeScenario(s, () => true);
+    expect(min.actions.filter((a) => a.action.type === "client")).toEqual(clientOps);
+    expect(
+      min.actions.every(
+        (a) => a.action.type === "client" || a.atMs >= s.durationMs - s.livenessAfterMs!,
+      ),
+    ).toBe(true);
+  });
+
   it("drops every fault the predicate does not need, but keeps repairs", () => {
     const s = generateScenario(5, { protocol: "raft" });
     const needed = s.actions[2]!;

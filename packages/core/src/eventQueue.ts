@@ -1,16 +1,20 @@
 /**
- * Min-heap of scheduled items ordered by (timeMs, seq). `seq` is assigned on push, so
- * items at the same virtual time pop in insertion order, which keeps runs deterministic.
+ * Min-heap of scheduled items ordered by (timeMs, priority, seq). `seq` is assigned on push,
+ * so items at the same time and priority pop in insertion order, which keeps runs
+ * deterministic. Lower priority values pop first.
  */
 
 export interface Queued<T> {
   readonly timeMs: number;
+  readonly priority: number;
   readonly seq: number;
   readonly item: T;
 }
 
 function before(x: Queued<unknown>, y: Queued<unknown>): boolean {
-  return x.timeMs < y.timeMs || (x.timeMs === y.timeMs && x.seq < y.seq);
+  if (x.timeMs !== y.timeMs) return x.timeMs < y.timeMs;
+  if (x.priority !== y.priority) return x.priority < y.priority;
+  return x.seq < y.seq;
 }
 
 export class EventQueue<T> {
@@ -30,9 +34,9 @@ export class EventQueue<T> {
     return this.nextSeq;
   }
 
-  push(timeMs: number, item: T): Queued<T> {
+  push(timeMs: number, item: T, priority = 0): Queued<T> {
     if (!Number.isFinite(timeMs)) throw new RangeError(`invalid time: ${timeMs}`);
-    const entry: Queued<T> = { timeMs, seq: this.nextSeq++, item };
+    const entry: Queued<T> = { timeMs, priority, seq: this.nextSeq++, item };
     const h = this.heap;
     h.push(entry);
     let i = h.length - 1;

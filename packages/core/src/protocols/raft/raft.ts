@@ -449,6 +449,9 @@ export function raft(
         lastApplied: s.volatile.lastApplied,
         log: s.persistent.log,
         data: s.volatile.kv.data,
+        sessions: Object.fromEntries(
+          Object.entries(s.volatile.kv.sessions).map(([client, session]) => [client, session.seq]),
+        ),
       };
     },
   };

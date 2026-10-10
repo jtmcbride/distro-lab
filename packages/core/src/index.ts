@@ -8,7 +8,9 @@ export {
   LinkNetwork,
   type LinkConfig,
   type LinkNetworkConfig,
+  type LinkNetworkView,
   type LinkOverride,
+  type LinkView,
   type NetworkChange,
 } from "./linkNetwork.ts";
 export {
@@ -68,3 +70,4 @@ export {
   type RequestClientView,
   type RequestClientVolatile,
 } from "./clients/requestClient.ts";
+export { NOTABLE_LABELS, SimulationHost, type Frame, type ProcessState } from "./host/host.ts";

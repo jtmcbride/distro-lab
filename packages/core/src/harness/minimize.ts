@@ -3,8 +3,9 @@ import type { Scenario } from "./scenario.ts";
 /**
  * Delta debugging: simplifies the network, then drops chunks of actions (halving the chunk
  * size down to one) while `stillFails` holds. Returns a scenario that fails the same way and
- * from which no single fault can be removed. Repair actions in the liveness window are
- * always kept.
+ * from which no single fault can be removed. Repair actions in the liveness window and client
+ * operations are always kept: client-visible checks (such as cas chains) depend on the whole
+ * workload, so removing operations would manufacture failures instead of isolating them.
  */
 export function minimizeScenario(
   scenario: Scenario,
@@ -26,19 +27,18 @@ export function minimizeScenario(
     if (stillFails(candidate)) best = candidate;
   }
 
-  // Large irrelevant groups go in a few runs instead of one run per action. Later chunks
-  // first: they are the most likely to be irrelevant to an earlier failure.
-  const faults = best.actions.filter((a) => a.atMs < repairsFrom).length;
-  let size = Math.max(1, Math.floor(faults / 2));
+  const keep = (a: Scenario["actions"][number]) =>
+    a.atMs >= repairsFrom || a.action.type === "client";
+  // Chunks are taken from the removable faults only (client operations are interleaved with
+  // them), largest first, so big irrelevant groups go in a few runs. Later chunks first: they
+  // are the most likely to be irrelevant to an earlier failure.
+  let size = Math.max(1, Math.floor(best.actions.filter((a) => !keep(a)).length / 2));
   for (;;) {
     let changed = false;
-    for (let end = best.actions.length; end > 0; end -= size) {
-      const start = Math.max(0, end - size);
-      if (best.actions.slice(start, end).some((a) => a.atMs >= repairsFrom)) continue;
-      const candidate: Scenario = {
-        ...best,
-        actions: [...best.actions.slice(0, start), ...best.actions.slice(end)],
-      };
+    const faults = best.actions.filter((a) => !keep(a));
+    for (let end = faults.length; end > 0; end -= size) {
+      const drop = new Set(faults.slice(Math.max(0, end - size), end));
+      const candidate: Scenario = { ...best, actions: best.actions.filter((a) => !drop.has(a)) };
       if (stillFails(candidate)) {
         best = candidate;
         changed = true;
