@@ -1,6 +1,7 @@
 import type { ClientMessage } from "../../clients/requestClient.ts";
 import type { NodeId } from "../../protocol.ts";
 import type { Context, Dot, Version } from "./clock.ts";
+import type { Crdt } from "./crdt.ts";
 
 export interface DynamoConfig {
   /** Replicas per key. */
@@ -36,9 +37,10 @@ export const DEFAULT_DYNAMO_CONFIG: DynamoConfig = {
 };
 
 export type DynamoOp =
+  /** Reads any key: a register's siblings, or a counter's or set's state. */
   | { readonly type: "get"; readonly key: string }
   /**
-   * `context` is the merged clock of what the writer last read; the new version replaces
+   * Registers. `context` is everything the writer last read; the new version replaces
    * those. Clients fill it in from their own reads when the operation leaves it out.
    */
   | {
@@ -46,19 +48,50 @@ export type DynamoOp =
       readonly key: string;
       readonly value: string;
       readonly context?: Context;
+    }
+  /** Counters (`count:` keys): add `by` (a positive integer). */
+  | { readonly type: "incr"; readonly key: string; readonly by: number }
+  /** Sets (`set:` keys). */
+  | { readonly type: "add"; readonly key: string; readonly element: string }
+  /**
+   * Removes the tags of `element` the writer observed (clients fill them in from their own
+   * reads when the operation leaves them out). Adds it has not seen survive.
+   */
+  | {
+      readonly type: "remove";
+      readonly key: string;
+      readonly element: string;
+      readonly observed?: readonly Dot[];
     };
 
 export type DynamoResult =
-  /** Every sibling the replicas that answered held, merged. */
+  /** A register's siblings: every version the replicas that answered held, merged. */
   | { readonly type: "get"; readonly versions: readonly Version[] }
+  /** A counter's or set's state, joined from the replicas that answered. */
+  | { readonly type: "crdt"; readonly state: Crdt }
   /** The version the put created. */
-  | { readonly type: "put"; readonly dot: Dot; readonly write: string };
+  | { readonly type: "put"; readonly dot: Dot; readonly write: string }
+  /** The coordinator's own running total for the counter, which now includes this increment. */
+  | { readonly type: "incr"; readonly node: NodeId; readonly total: number }
+  /** The tag the add created. */
+  | { readonly type: "add"; readonly element: string; readonly tag: Dot }
+  | { readonly type: "remove"; readonly element: string; readonly observed: readonly Dot[] }
+  /** The operation does not apply to the key's type (e.g. `incr` on a register). */
+  | { readonly type: "invalid"; readonly reason: string };
 
-/** Sibling sets by key. */
-export type Store = Record<string, readonly Version[]>;
+/**
+ * What a server stores for a key: a register's sibling versions, or a counter's or set's
+ * state. Updates and replication join slots of the same kind.
+ */
+export type Slot = readonly Version[] | Crdt;
+
+export type Store = Record<string, Slot>;
 
 export interface DynamoPersistent {
-  /** Per key, the last counter this server stamped into a dot as coordinator. */
+  /**
+   * Per key, as coordinator: the last dot counter this server stamped (registers and sets),
+   * or its running total of increments (counters).
+   */
   counters: Record<string, number>;
   /** Request ids issued as coordinator; durable so replies to an old life never match. */
   requests: number;
@@ -71,18 +104,19 @@ export interface DynamoPersistent {
 /** One request this server is coordinating. */
 export interface Coordination {
   readonly id: string;
-  readonly kind: "get" | "put";
+  readonly kind: "read" | "write";
   readonly key: string;
   readonly clientId: NodeId;
   readonly seq: number;
-  /** Puts: the version being written. */
-  readonly version: Version | null;
+  /** Writes: the update being replicated, and the reply once W servers stored it. */
+  readonly update: Slot | null;
+  readonly result: DynamoResult | null;
   /** Servers asked so far, each mapped to the replica it stands in for (itself for replicas). */
   readonly standsFor: Record<NodeId, NodeId>;
   /** 0 until the first timeout, then 1 (a coordinator asks twice, then gives up). */
   round: number;
-  /** Puts: who stored the version. Gets: what each server answered. */
-  readonly answers: Record<NodeId, readonly Version[]>;
+  /** Writes: who stored the update. Reads: what each server answered. */
+  readonly answers: Record<NodeId, Slot>;
   replied: boolean;
 }
 
@@ -107,7 +141,7 @@ export interface Replicate {
   readonly type: "Replicate";
   readonly req: string;
   readonly key: string;
-  readonly versions: readonly Version[];
+  readonly value: Slot;
   /** Set when the receiver stands in for this replica (sloppy quorum). */
   readonly hintFor: NodeId | null;
 }
@@ -126,27 +160,27 @@ export interface Read {
 export interface ReadReply {
   readonly type: "ReadReply";
   readonly req: string;
-  readonly versions: readonly Version[];
+  readonly value: Slot;
 }
 
 /** Read repair: the merged result of a get, for a replica that answered with less. */
 export interface Repair {
   readonly type: "Repair";
   readonly key: string;
-  readonly versions: readonly Version[];
+  readonly value: Slot;
 }
 
 /** Hinted handoff: versions held for the receiver while it was unreachable. */
 export interface Handoff {
   readonly type: "Handoff";
   readonly key: string;
-  readonly versions: readonly Version[];
+  readonly value: Slot;
 }
 
 export interface HandoffAck {
   readonly type: "HandoffAck";
   readonly key: string;
-  readonly versions: readonly Version[];
+  readonly value: Slot;
 }
 
 /** Anti-entropy, step 1: a digest of each key both servers replicate. */

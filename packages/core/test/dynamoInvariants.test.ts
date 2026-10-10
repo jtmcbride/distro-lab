@@ -169,6 +169,52 @@ describe("Dynamo invariants", () => {
     expect(replay(states, records, Dynamo.DEFAULT_DYNAMO_CONFIG)).toEqual([]);
   });
 
+  it("flag a counter that credits a coordinator with more than it counted", () => {
+    const count = (counts: Record<string, number>) => ({ type: "counter" as const, counts });
+    expect(
+      replay([
+        { A: {}, B: {} },
+        { A: { counters: { "count:n": 2 }, data: { "count:n": count({ A: 2 }) } }, B: {} },
+        {
+          A: { counters: { "count:n": 2 }, data: { "count:n": count({ A: 2 }) } },
+          B: { data: { "count:n": count({ A: 4 }) } },
+        },
+      ]),
+    ).toEqual(["counters-bounded@2"]);
+  });
+
+  it("flag acknowledged increments and adds that are on no server", () => {
+    const tag = { node: "A", counter: 1 };
+    const set = (entries: Record<string, Dynamo.Dot[]>, dots: Dynamo.Dot[]) => ({
+      type: "set" as const,
+      entries,
+      context: Dynamo.joinContexts([], dots),
+    });
+    const records = [
+      [],
+      [
+        note("c1", "invoke", { seq: 1, op: { type: "incr", key: "count:n", by: 2 } }),
+        note("c1", "complete", { seq: 1, result: { type: "incr", node: "A", total: 2 } }),
+        note("c1", "invoke", { seq: 2, op: { type: "add", key: "set:s", element: "x" } }),
+        note("c1", "complete", { seq: 2, result: { type: "add", element: "x", tag } }),
+      ],
+    ];
+    const ok = {
+      counters: { "count:n": 2, "set:s": 1 },
+      data: {
+        "count:n": { type: "counter" as const, counts: { A: 2 } },
+        "set:s": set({ x: [tag] }, [tag]),
+      },
+    };
+    expect(replay([{ A: {} }, { A: ok }], records)).toEqual([]);
+    // The tag vanished without any remove having observed it. To the join this looks like a
+    // remove (the state grew), so only the client history shows the loss.
+    const lost = { ...ok, data: { ...ok.data, "set:s": set({}, [tag]) } };
+    expect(replay([{ A: {} }, { A: ok }, { A: lost }], records)).toEqual([
+      "acknowledged-writes-durable@2",
+    ]);
+  });
+
   it("accept a read that started before the put was acknowledged", () => {
     expect(
       replay(

@@ -59,6 +59,14 @@ export const DYNAMO_BUGS = {
     "Read repair replaces a replica's versions with the get's result instead of merging, losing writes that arrived since.",
     { repairOverwrites: true },
   ),
+  "summing-counters": internal(
+    "Joins counters by adding their entries instead of taking the maximum, so a redelivered update counts twice.",
+    { sumCounters: true },
+  ),
+  "remove-all-tags": internal(
+    "A set remove that observed any of an element's tags deletes all of them, including concurrent adds it never saw.",
+    { removeAllTags: true },
+  ),
 } satisfies Record<string, BugSpec>;
 
 export type DynamoBug = keyof typeof DYNAMO_BUGS;

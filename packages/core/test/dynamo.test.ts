@@ -64,8 +64,11 @@ function store(options: {
     Dynamo.replicasOf(servers, key, n).map((s) =>
       canonicalJson((view(s).data[key] ?? []) as never),
     );
+  /** Values of a register's siblings on one server. */
+  const stored = (server: string, key: string) =>
+    (view(server).data[key] as readonly Dynamo.Version[] | undefined)?.map((v) => v.value);
   const hintsLeft = () => servers.some((s) => Object.keys(view(s).hints).length > 0);
-  return { sim, rec, monitor, view, annotations, results, values, replicaData, hintsLeft };
+  return { sim, rec, monitor, view, stored, annotations, results, values, replicaData, hintsLeft };
 }
 
 const op = (atMs: number, client: string, command: Op): Action => ({
@@ -146,10 +149,64 @@ describe("Dynamo: quorum reads and writes", () => {
   });
 });
 
+describe("Dynamo: CRDT values", () => {
+  const counter = (r: Dynamo.DynamoResult | undefined) =>
+    r?.type === "crdt" && r.state.type === "counter" ? Dynamo.counterValue(r.state) : null;
+  const elements = (r: Dynamo.DynamoResult | undefined) =>
+    r?.type === "crdt" && r.state.type === "set" ? Dynamo.setElements(r.state) : null;
+
+  it("counts concurrent increments through any coordinators, with no siblings", () => {
+    const { sim, results, replicaData } = store({
+      actions: [
+        op(10, "c1", { type: "incr", key: "count:likes", by: 2 }),
+        op(10, "c2", { type: "incr", key: "count:likes", by: 3 }),
+        op(50, "c1", { type: "incr", key: "count:likes", by: 1 }),
+        get(400, "c2", "count:likes"),
+      ],
+    });
+    sim.runUntil(3000);
+    expect(counter(results("c2")[1])).toBe(6);
+    expect(new Set(replicaData("count:likes")).size).toBe(1);
+  });
+
+  it("removes only the tags a client observed, so a concurrent add survives", () => {
+    const { sim, results } = store({
+      actions: [
+        op(10, "c1", { type: "add", key: "set:cart", element: "milk" }),
+        get(100, "c1", "set:cart"),
+        // c1 removes the milk it saw while c2, unaware, adds milk again.
+        op(200, "c1", { type: "remove", key: "set:cart", element: "milk" }),
+        op(200, "c2", { type: "add", key: "set:cart", element: "milk" }),
+        op(200, "c2", { type: "add", key: "set:cart", element: "eggs" }),
+        get(600, "c1", "set:cart"),
+        op(700, "c1", { type: "remove", key: "set:cart", element: "eggs" }),
+        get(900, "c1", "set:cart"),
+      ],
+    });
+    sim.runUntil(3000);
+    const c1 = results("c1");
+    expect(elements(c1[1])).toEqual(["milk"]);
+    expect(c1[2]).toMatchObject({ type: "remove", element: "milk" });
+    expect(elements(c1[3])).toEqual(["eggs", "milk"]);
+    expect(elements(c1[5])).toEqual(["milk"]);
+  });
+
+  it("rejects an operation that does not fit the key's type", () => {
+    const { sim, results } = store({
+      actions: [
+        op(10, "c1", { type: "incr", key: "x", by: 1 }),
+        op(20, "c1", { type: "put", key: "count:n", value: "1" }),
+      ],
+    });
+    sim.runUntil(500);
+    expect(results("c1").map((r) => r.type)).toEqual(["invalid", "invalid"]);
+  });
+});
+
 describe("Dynamo: repair mechanisms", () => {
   it("sloppy quorum: writes through fallbacks with hints, handed off when replicas return", () => {
     const [r1, r2] = replicas("x");
-    const { sim, results, annotations, replicaData, hintsLeft, view } = store({
+    const { sim, results, annotations, replicaData, hintsLeft, view, stored } = store({
       config: { antiEntropyIntervalMs: 0 },
       actions: [
         crash(1, r1!),
@@ -166,7 +223,7 @@ describe("Dynamo: repair mechanisms", () => {
     expect(holders.length).toBeGreaterThan(0);
     sim.runUntil(1500);
     // r1 got its hint; r2 is still down, so its hint is still held.
-    expect(view(r1!).data.x?.map((v) => v.value)).toEqual(["1"]);
+    expect(stored(r1!, "x")).toEqual(["1"]);
     expect(annotations("handedOff").length).toBeGreaterThan(0);
     expect(view(r2!).data.x).toBeUndefined();
     sim.runUntil(3000);
@@ -176,7 +233,7 @@ describe("Dynamo: repair mechanisms", () => {
 
   it("read repair fixes a replica that missed a write", () => {
     const [r1, r2, r3] = replicas("x");
-    const { sim, results, values, annotations, view } = store({
+    const { sim, results, values, annotations, stored } = store({
       config: { antiEntropyIntervalMs: 0, sloppy: false, r: 3 },
       actions: [
         net(1, { type: "isolate", node: r3! }),
@@ -188,13 +245,13 @@ describe("Dynamo: repair mechanisms", () => {
     sim.runUntil(1500);
     expect(values(results("c2")[0])).toEqual(["1"]);
     expect(annotations("readRepair").map((r) => r.data)).toEqual([{ key: "x", nodes: [r3] }]);
-    for (const r of [r1!, r2!, r3!]) expect(view(r).data.x?.map((v) => v.value)).toEqual(["1"]);
+    for (const r of [r1!, r2!, r3!]) expect(stored(r, "x")).toEqual(["1"]);
   });
 
   it("anti-entropy converges replicas, including siblings from both sides of a partition", () => {
     const [r1, r2, r3] = replicas("x");
     const [f1, f2] = fallbacks("x");
-    const { sim, results, replicaData, view } = store({
+    const { sim, results, replicaData, stored } = store({
       config: { readRepair: false },
       actions: [
         // Each side can reach W = 2 servers for x (the left side through a fallback).
@@ -216,11 +273,7 @@ describe("Dynamo: repair mechanisms", () => {
     expect(results("c2")).toEqual([expect.objectContaining({ type: "put" })]);
     sim.runUntil(8000);
     expect(new Set(replicaData("x")).size).toBe(1);
-    expect(
-      view(r1!)
-        .data.x?.map((v) => v.value)
-        .sort(),
-    ).toEqual(["left", "right"]);
+    expect(stored(r1!, "x")?.sort()).toEqual(["left", "right"]);
   });
 
   it("is deterministic", () => {

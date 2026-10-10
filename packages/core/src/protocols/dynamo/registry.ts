@@ -5,11 +5,12 @@ import type { NodeId } from "../../protocol.ts";
 import type { RunnableSimulation } from "../../simulation.ts";
 import { formatDot, type Version } from "./clock.ts";
 import { DYNAMO_BUGS } from "./bugs.ts";
-import { dynamo, dynamoClient } from "./dynamo.ts";
+import { dynamo, dynamoClient, emptySlot } from "./dynamo.ts";
 import { dynamoInvariants } from "./invariants.ts";
 import { replicasOf } from "./ring.ts";
 import { DYNAMO_EXAMPLES } from "./scenarios.ts";
-import { DEFAULT_DYNAMO_CONFIG, type DynamoConfig, type DynamoView } from "./types.ts";
+import { formatCrdt, type Crdt } from "./crdt.ts";
+import { DEFAULT_DYNAMO_CONFIG, type DynamoConfig, type DynamoView, type Slot } from "./types.ts";
 import { dynamoWorkload } from "./workload.ts";
 
 const configOf = (config: CanonicalValue | undefined): DynamoConfig => ({
@@ -37,10 +38,10 @@ export function dynamoConverged(
   const keys = new Set(servers.flatMap((n) => Object.keys(view(n).data)));
   for (const key of [...keys].sort()) {
     const replicas = replicasOf(servers, key, config.n);
-    const held = replicas.map((r) => canonicalJson((view(r).data[key] ?? []) as never));
+    const held = replicas.map((r) => canonicalJson((view(r).data[key] ?? emptySlot(key)) as never));
     if (new Set(held).size > 1) {
       problems.push(
-        `replicas of ${key} differ: ${replicas.map((r) => `${r}=${formatVersions(view(r).data[key] ?? [])}`).join(" ")}`,
+        `replicas of ${key} differ: ${replicas.map((r) => `${r}=${formatSlot(view(r).data[key] ?? emptySlot(key))}`).join(" ")}`,
       );
     }
   }
@@ -57,11 +58,16 @@ export function formatVersions(versions: readonly Version[]): string {
   return `[${versions.map((v) => `${v.value}@${formatDot(v.dot)}`).join(" | ")}]`;
 }
 
+/** A register's siblings, a counter's value or a set's elements. */
+export function formatSlot(slot: Slot): string {
+  return Array.isArray(slot) ? formatVersions(slot) : formatCrdt(slot as Crdt);
+}
+
 /** e.g. `k0=[c1.3@A2] k1=[c1.1@A1 | c2.4@C2] | hints for B: k1` */
 export function formatDynamoView(v: DynamoView): string {
   const data = Object.keys(v.data)
     .sort()
-    .map((k) => `${k}=${formatVersions(v.data[k]!)}`);
+    .map((k) => `${k}=${formatSlot(v.data[k]!)}`);
   const hints = Object.keys(v.hints)
     .sort()
     .map((owner) => `hints for ${owner}: ${Object.keys(v.hints[owner]!).sort().join(",")}`);

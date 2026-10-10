@@ -18,6 +18,7 @@ import {
   type Context,
   type Version,
 } from "./clock.ts";
+import { crdtKind, emptyCrdt, joinCrdt, type Crdt, type OrSet } from "./crdt.ts";
 import { preferenceList } from "./ring.ts";
 import {
   DEFAULT_DYNAMO_CONFIG,
@@ -29,6 +30,7 @@ import {
   type DynamoResult,
   type DynamoView,
   type DynamoVolatile,
+  type Slot,
   type Store,
   type SyncData,
 } from "./types.ts";
@@ -54,6 +56,10 @@ export interface PlantedDynamoBugs {
   readonly ackEarly?: boolean;
   /** Read repair replaces a replica's versions instead of merging into them. */
   readonly repairOverwrites?: boolean;
+  /** Join counters by adding entries instead of taking the maximum. */
+  readonly sumCounters?: boolean;
+  /** A set remove that observed any of an element's tags drops all of them. */
+  readonly removeAllTags?: boolean;
 }
 
 type State = NodeState<DynamoPersistent, DynamoVolatile>;
@@ -72,7 +78,21 @@ function without<T>(record: Record<string, T>, key: string): Record<string, T> {
   return rest;
 }
 
-const digest = (versions: readonly Version[]) => hashString32(canonicalJson(versions as never));
+const digest = (slot: Slot) => hashString32(canonicalJson(slot as never));
+const isRegister = (slot: Slot): slot is readonly Version[] => Array.isArray(slot);
+
+/** What a server holds for a key it has never written. */
+export function emptySlot(key: string): Slot {
+  const kind = crdtKind(key);
+  return kind === null ? [] : emptyCrdt(kind);
+}
+
+export function isEmptySlot(slot: Slot): boolean {
+  if (isRegister(slot)) return slot.length === 0;
+  return slot.type === "counter"
+    ? Object.keys(slot.counts).length === 0
+    : Object.keys(slot.entries).length === 0 && digest(slot) === digest(emptyCrdt("set"));
+}
 
 /**
  * A Dynamo-style leaderless key-value store (DeCandia et al., 2007) with fixed membership.
@@ -132,60 +152,128 @@ export function dynamo(
     return a.length === 1 && a[0] === winner ? a : [winner];
   }
 
+  /** Joins two slots of the same key. Returns `a` itself when `b` adds nothing. */
+  function join(a: Slot, b: Slot): Slot {
+    if (isRegister(a) && isRegister(b)) return merge(a, b);
+    if (!isRegister(a) && !isRegister(b)) return joinCrdt(a, b, bugs);
+    throw new TypeError("cannot join a register with a CRDT");
+  }
+
   // ---------------------------------------------------------------------------------------
   // Local storage
 
-  function storeData(s: State, key: string, versions: readonly Version[]): void {
-    const before = s.persistent.data[key] ?? [];
-    const after = merge(before, versions);
-    if (after !== before) s.persistent.data[key] = after;
+  function storeData(s: State, key: string, value: Slot): void {
+    const before = s.persistent.data[key] ?? emptySlot(key);
+    const after = join(before, value);
+    if (after !== before || !Object.hasOwn(s.persistent.data, key)) s.persistent.data[key] = after;
   }
 
-  function storeHint(ctx: Ctx, s: State, owner: NodeId, key: string, versions: readonly Version[]) {
+  function storeHint(ctx: Ctx, s: State, owner: NodeId, key: string, value: Slot) {
     const store = (s.persistent.hints[owner] ??= {});
-    const before = store[key] ?? [];
-    const after = merge(before, versions);
-    if (after !== before) store[key] = after;
+    const before = store[key] ?? emptySlot(key);
+    const after = join(before, value);
+    if (after !== before || !Object.hasOwn(store, key)) store[key] = after;
     armHandoff(ctx, s);
   }
 
   /** What this server can say about a key: its replica data plus any hints for it. */
-  function localVersions(s: State, key: string): readonly Version[] {
-    let versions = s.persistent.data[key] ?? [];
+  function localValue(s: State, key: string): Slot {
+    let value = s.persistent.data[key] ?? emptySlot(key);
     for (const owner of sorted(Object.keys(s.persistent.hints))) {
-      versions = merge(versions, s.persistent.hints[owner]![key] ?? []);
+      const hinted = s.persistent.hints[owner]![key];
+      if (hinted !== undefined) value = join(value, hinted);
     }
-    return versions;
+    return value;
   }
 
   // ---------------------------------------------------------------------------------------
   // Coordinating client requests
 
-  function coordinate(ctx: Ctx, s: State, m: ClientRequest<DynamoOp>): void {
+  /** The update a write replicates and the reply it earns, or why it does not apply. */
+  function prepareWrite(
+    ctx: Ctx,
+    s: State,
+    m: ClientRequest<DynamoOp>,
+  ): { update: Slot; result: DynamoResult } | string {
     const p = s.persistent;
-    const id = `${ctx.nodeId}:${++p.requests}`;
     const op = m.op;
-    let version: Version | null = null;
-    if (op.type === "put") {
-      const context = joinContexts([op.context ?? EMPTY_CONTEXT]);
-      const last = p.counters[op.key] ?? 0;
-      const stamp =
-        bugs.reuseCounter === true ? (contextVector(context)[ctx.nodeId] ?? 0) + 1 : last + 1;
-      p.counters[op.key] = Math.max(last, stamp);
-      version = {
-        value: op.value,
-        dot: { node: ctx.nodeId, counter: stamp },
-        context,
-        write: `${m.clientId}#${m.seq}`,
+    const kind = crdtKind(op.key);
+    const last = p.counters[op.key] ?? 0;
+    const self = ctx.nodeId;
+    switch (op.type) {
+      case "get":
+        throw new TypeError("not a write");
+      case "put": {
+        if (kind !== null) return `put does not apply to a ${kind}`;
+        const context = joinContexts([op.context ?? EMPTY_CONTEXT]);
+        const stamp =
+          bugs.reuseCounter === true ? (contextVector(context)[self] ?? 0) + 1 : last + 1;
+        p.counters[op.key] = Math.max(last, stamp);
+        const version: Version = {
+          value: op.value,
+          dot: { node: self, counter: stamp },
+          context,
+          write: `${m.clientId}#${m.seq}`,
+        };
+        return {
+          update: [version],
+          result: { type: "put", dot: version.dot, write: version.write },
+        };
+      }
+      case "incr": {
+        if (kind !== "counter") return "incr applies only to count: keys";
+        if (!Number.isSafeInteger(op.by) || op.by < 1) return "incr needs a positive integer";
+        const total = (p.counters[op.key] = last + op.by);
+        return {
+          update: { type: "counter", counts: { [self]: total } },
+          result: { type: "incr", node: self, total },
+        };
+      }
+      case "add": {
+        if (kind !== "set") return "add applies only to set: keys";
+        const tag = { node: self, counter: (p.counters[op.key] = last + 1) };
+        return {
+          update: {
+            type: "set",
+            entries: { [op.element]: [tag] },
+            context: joinContexts([], [tag]),
+          },
+          result: { type: "add", element: op.element, tag },
+        };
+      }
+      case "remove": {
+        if (kind !== "set") return "remove applies only to set: keys";
+        const observed = op.observed ?? [];
+        return {
+          update: { type: "set", entries: {}, context: joinContexts([], observed) },
+          result: { type: "remove", element: op.element, observed },
+        };
+      }
+    }
+  }
+
+  function coordinate(ctx: Ctx, s: State, m: ClientRequest<DynamoOp>): void {
+    const id = `${ctx.nodeId}:${++s.persistent.requests}`;
+    const op = m.op;
+    const write = op.type === "get" ? null : prepareWrite(ctx, s, m);
+    if (typeof write === "string") {
+      const reply: ClientReply<DynamoResult> = {
+        type: "ClientReply",
+        seq: m.seq,
+        status: "ok",
+        result: { type: "invalid", reason: write },
       };
+      ctx.send(m.clientId, reply);
+      return;
     }
     const c: Coordination = {
       id,
-      kind: op.type,
+      kind: write === null ? "read" : "write",
       key: op.key,
       clientId: m.clientId,
       seq: m.seq,
-      version,
+      update: write?.update ?? null,
+      result: write?.result ?? null,
       standsFor: {},
       round: 0,
       answers: {},
@@ -202,46 +290,49 @@ export function dynamo(
     c.standsFor[node] = owner;
     const hintFor = node === owner ? null : owner;
     if (node === ctx.nodeId) {
-      if (c.kind === "put") {
-        if (hintFor === null) storeData(s, c.key, [c.version!]);
-        else storeHint(ctx, s, hintFor, c.key, [c.version!]);
-        c.answers[node] = [c.version!];
+      if (c.kind === "write") {
+        if (hintFor === null) storeData(s, c.key, c.update!);
+        else storeHint(ctx, s, hintFor, c.key, c.update!);
+        c.answers[node] = c.update!;
       } else {
-        c.answers[node] = localVersions(s, c.key);
+        c.answers[node] = localValue(s, c.key);
       }
       return;
     }
     ctx.send(
       node,
-      c.kind === "put"
-        ? { type: "Replicate", req: c.id, key: c.key, versions: [c.version!], hintFor }
+      c.kind === "write"
+        ? { type: "Replicate", req: c.id, key: c.key, value: c.update!, hintFor }
         : { type: "Read", req: c.id, key: c.key },
     );
   }
 
-  function answer(ctx: Ctx, s: State, req: string, from: NodeId, versions: readonly Version[]) {
+  function answer(ctx: Ctx, s: State, req: string, from: NodeId, value: Slot) {
     const c = s.volatile.pending[req];
     if (c === undefined || !Object.hasOwn(c.standsFor, from) || Object.hasOwn(c.answers, from)) {
       return; // late, duplicated or from an earlier life
     }
-    c.answers[from] = versions;
+    c.answers[from] = value;
     progress(ctx, s, c);
   }
 
-  function merged(c: Coordination): readonly Version[] {
-    return Object.values(c.answers).reduce<readonly Version[]>((acc, vs) => merge(acc, vs), []);
+  function merged(c: Coordination): Slot {
+    return Object.values(c.answers).reduce((acc, v) => join(acc, v), emptySlot(c.key));
   }
 
   /** Replies once enough servers answered; finishes once everyone asked has. */
   function progress(ctx: Ctx, s: State, c: Coordination): void {
     const answered = Object.keys(c.answers).length;
-    const needed = c.kind === "put" ? config.w - (bugs.ackEarly === true ? 1 : 0) : config.r;
+    const needed = c.kind === "write" ? config.w - (bugs.ackEarly === true ? 1 : 0) : config.r;
     if (!c.replied && answered >= needed) {
       c.replied = true;
-      const result: DynamoResult =
-        c.kind === "put"
-          ? { type: "put", dot: c.version!.dot, write: c.version!.write }
-          : { type: "get", versions: merged(c) };
+      let result = c.result;
+      if (result === null) {
+        const value = merged(c);
+        result = isRegister(value)
+          ? { type: "get", versions: value }
+          : { type: "crdt", state: value as Crdt };
+      }
       const reply: ClientReply<DynamoResult> = {
         type: "ClientReply",
         seq: c.seq,
@@ -258,7 +349,7 @@ export function dynamo(
   function finish(ctx: Ctx, s: State, c: Coordination): void {
     s.volatile.pending = without(s.volatile.pending, c.id);
     ctx.cancelTimer(OP_TIMER_PREFIX + c.id);
-    if (c.kind === "get" && config.readRepair) readRepair(ctx, s, c);
+    if (c.kind === "read" && config.readRepair) readRepair(ctx, s, c);
   }
 
   /** Sends the merged result to every replica that answered with something else. */
@@ -273,13 +364,13 @@ export function dynamo(
     ctx.annotate("readRepair", { key: c.key, nodes: stale });
     for (const n of stale) {
       if (n === ctx.nodeId) repairLocal(s, c.key, result);
-      else ctx.send(n, { type: "Repair", key: c.key, versions: result });
+      else ctx.send(n, { type: "Repair", key: c.key, value: result });
     }
   }
 
-  function repairLocal(s: State, key: string, versions: readonly Version[]): void {
-    if (bugs.repairOverwrites === true) s.persistent.data[key] = versions;
-    else storeData(s, key, versions);
+  function repairLocal(s: State, key: string, value: Slot): void {
+    if (bugs.repairOverwrites === true) s.persistent.data[key] = value;
+    else storeData(s, key, value);
   }
 
   /**
@@ -338,22 +429,21 @@ export function dynamo(
     const hints = s.persistent.hints;
     for (const owner of sorted(Object.keys(hints))) {
       for (const key of sorted(Object.keys(hints[owner]!))) {
-        ctx.send(owner, { type: "Handoff", key, versions: hints[owner]![key]! });
+        ctx.send(owner, { type: "Handoff", key, value: hints[owner]![key]! });
       }
     }
     armHandoff(ctx, s);
   }
 
-  /** The owner stored these versions: drop them from the hints held for it. */
-  function onHandoffAck(ctx: Ctx, s: State, from: NodeId, key: string, acked: readonly Version[]) {
+  /**
+   * The owner stored this value: drop the hint, unless it has grown since it was sent (the
+   * rest goes with the next attempt).
+   */
+  function onHandoffAck(ctx: Ctx, s: State, from: NodeId, key: string, acked: Slot) {
     const store = s.persistent.hints[from];
     const held = store?.[key];
-    if (store === undefined || held === undefined) return;
-    const done = new Set(acked.map((v) => canonicalJson(v as never)));
-    const left = held.filter((v) => !done.has(canonicalJson(v as never)));
-    if (left.length === held.length) return;
-    if (left.length > 0) store[key] = left;
-    else if (Object.keys(store).length > 1) s.persistent.hints[from] = without(store, key);
+    if (store === undefined || held === undefined || digest(held) !== digest(acked)) return;
+    if (Object.keys(store).length > 1) s.persistent.hints[from] = without(store, key);
     else s.persistent.hints = without(s.persistent.hints, from);
     ctx.annotate("handedOff", { key, to: from });
   }
@@ -391,10 +481,10 @@ export function dynamo(
     const want: string[] = [];
     for (const key of sorted(new Set([...Object.keys(digests), ...Object.keys(data)]))) {
       if (!shared(ctx, key, from)) continue;
-      const mine = data[key] ?? [];
+      const mine = data[key] ?? emptySlot(key);
       const theirs = digests[key];
       if (theirs !== undefined && theirs === digest(mine)) continue;
-      if (mine.length > 0) entries[key] = mine;
+      if (!isEmptySlot(mine)) entries[key] = mine;
       if (theirs !== undefined) want.push(key);
     }
     if (Object.keys(entries).length > 0 || want.length > 0) {
@@ -409,7 +499,7 @@ export function dynamo(
     const entries: Store = {};
     for (const key of m.want) {
       const mine = s.persistent.data[key];
-      if (mine !== undefined && mine.length > 0) entries[key] = mine;
+      if (mine !== undefined && !isEmptySlot(mine)) entries[key] = mine;
     }
     if (Object.keys(entries).length > 0) ctx.send(from, { type: "SyncData", entries, want: [] });
   }
@@ -462,30 +552,30 @@ export function dynamo(
         case "ClientReply":
           return;
         case "Replicate":
-          if (m.hintFor === null) storeData(s, m.key, m.versions);
-          else storeHint(ctx, s, m.hintFor, m.key, m.versions);
+          if (m.hintFor === null) storeData(s, m.key, m.value);
+          else storeHint(ctx, s, m.hintFor, m.key, m.value);
           ctx.send(from, { type: "ReplicateAck", req: m.req });
           return;
         case "ReplicateAck": {
           const c = s.volatile.pending[m.req];
-          if (c?.kind === "put") answer(ctx, s, m.req, from, [c.version!]);
+          if (c?.kind === "write") answer(ctx, s, m.req, from, c.update!);
           return;
         }
         case "Read":
-          ctx.send(from, { type: "ReadReply", req: m.req, versions: localVersions(s, m.key) });
+          ctx.send(from, { type: "ReadReply", req: m.req, value: localValue(s, m.key) });
           return;
         case "ReadReply":
-          if (s.volatile.pending[m.req]?.kind === "get") answer(ctx, s, m.req, from, m.versions);
+          if (s.volatile.pending[m.req]?.kind === "read") answer(ctx, s, m.req, from, m.value);
           return;
         case "Repair":
-          repairLocal(s, m.key, m.versions);
+          repairLocal(s, m.key, m.value);
           return;
         case "Handoff":
-          storeData(s, m.key, m.versions);
-          ctx.send(from, { type: "HandoffAck", key: m.key, versions: m.versions });
+          storeData(s, m.key, m.value);
+          ctx.send(from, { type: "HandoffAck", key: m.key, value: m.value });
           return;
         case "HandoffAck":
-          onHandoffAck(ctx, s, from, m.key, m.versions);
+          onHandoffAck(ctx, s, from, m.key, m.value);
           return;
         case "SyncDigest":
           onSyncDigest(ctx, s, from, m.digests);
@@ -512,8 +602,9 @@ export function dynamo(
 }
 
 /**
- * The standard client, remembering per key the context of what it last read or wrote and
- * attaching it to its next put of that key (unless the put names a context itself).
+ * The standard client. Per key it remembers what it last read or wrote (a register's
+ * context, a set's state) and fills it into its next put or remove of that key, unless the
+ * operation names a context or observed tags itself.
  *
  * Its timeout outlasts a coordinator's two rounds: a retry through another coordinator
  * writes the value again under a new dot, which becomes a sibling.
@@ -524,18 +615,52 @@ export function dynamoClient(overrides: Partial<RequestClientConfig> = {}) {
     {
       prepare(op, memory) {
         const seen = memory[op.key];
-        if (op.type !== "put" || op.context !== undefined || seen === undefined) return op;
-        return { ...op, context: seen as Context };
+        if (seen === undefined) return op;
+        if (op.type === "put" && op.context === undefined) {
+          return { ...op, context: seen as Context };
+        }
+        if (op.type === "remove" && op.observed === undefined) {
+          return { ...op, observed: (seen as OrSet).entries[op.element] ?? [] };
+        }
+        return op;
       },
       observe(op, result, memory) {
-        const seen =
-          result.type === "get"
-            ? contextOf(result.versions)
-            : joinContexts(
-                [op.type === "put" ? (op.context ?? EMPTY_CONTEXT) : EMPTY_CONTEXT],
-                [result.dot],
-              );
-        memory[op.key] = joinContexts([(memory[op.key] ?? EMPTY_CONTEXT) as Context, seen]);
+        const key = op.key;
+        switch (result.type) {
+          case "get":
+            memory[key] = joinContexts([
+              (memory[key] ?? EMPTY_CONTEXT) as Context,
+              contextOf(result.versions),
+            ]);
+            return;
+          case "put":
+            memory[key] = joinContexts(
+              [
+                (memory[key] ?? EMPTY_CONTEXT) as Context,
+                op.type === "put" ? (op.context ?? EMPTY_CONTEXT) : EMPTY_CONTEXT,
+              ],
+              [result.dot],
+            );
+            return;
+          case "crdt":
+            if (result.state.type === "set") {
+              memory[key] = joinCrdt((memory[key] ?? emptyCrdt("set")) as OrSet, result.state);
+            }
+            return;
+          case "add":
+          case "remove": {
+            const tags = result.type === "add" ? [result.tag] : result.observed;
+            const delta: OrSet = {
+              type: "set",
+              entries: result.type === "add" ? { [result.element]: tags } : {},
+              context: joinContexts([], tags),
+            };
+            memory[key] = joinCrdt((memory[key] ?? emptyCrdt("set")) as OrSet, delta);
+            return;
+          }
+          default:
+            return;
+        }
       },
     },
   );
