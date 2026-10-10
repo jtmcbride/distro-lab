@@ -1,11 +1,11 @@
-import { canonicalJson, type CanonicalValue } from "../../canonical.ts";
+import type { CanonicalValue } from "../../canonical.ts";
 import type { RequestClientView } from "../../clients/requestClient.ts";
 import { defineProtocol, type ProtocolEntry } from "../../harness/scenario.ts";
 import type { NodeId } from "../../protocol.ts";
 import type { RunnableSimulation } from "../../simulation.ts";
 import { formatDot, type Version } from "./clock.ts";
 import { DYNAMO_BUGS } from "./bugs.ts";
-import { dynamo, dynamoClient, emptySlot } from "./dynamo.ts";
+import { dynamo, dynamoClient, emptySlot, slotDigest } from "./dynamo.ts";
 import { dynamoInvariants } from "./invariants.ts";
 import { replicasOf } from "./ring.ts";
 import { DYNAMO_EXAMPLES } from "./scenarios.ts";
@@ -38,7 +38,7 @@ export function dynamoConverged(
   const keys = new Set(servers.flatMap((n) => Object.keys(view(n).data)));
   for (const key of [...keys].sort()) {
     const replicas = replicasOf(servers, key, config.n);
-    const held = replicas.map((r) => canonicalJson((view(r).data[key] ?? emptySlot(key)) as never));
+    const held = replicas.map((r) => slotDigest(view(r).data[key] ?? emptySlot(key)));
     if (new Set(held).size > 1) {
       problems.push(
         `replicas of ${key} differ: ${replicas.map((r) => `${r}=${formatSlot(view(r).data[key] ?? emptySlot(key))}`).join(" ")}`,

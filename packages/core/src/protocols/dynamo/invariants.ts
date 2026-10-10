@@ -18,6 +18,8 @@ type Snap = ClusterSnapshot<DynamoView>;
 
 /** One stored slot: a server's replica data for a key, or a hint it holds. */
 interface Place {
+  /** `node|hintFor|key` */
+  readonly id: string;
   readonly node: NodeId;
   /** Owner the hint is held for; null for replica data. */
   readonly hintFor: NodeId | null;
@@ -25,15 +27,27 @@ interface Place {
   readonly slot: Slot;
 }
 
-function places(s: Snap): Place[] {
+// Every invariant looks at the same snapshot after a step; list its places once.
+const placesOf = new WeakMap<Snap, readonly Place[]>();
+
+function places(s: Snap): readonly Place[] {
+  let cached = placesOf.get(s);
+  if (cached === undefined) {
+    cached = listPlaces(s);
+    placesOf.set(s, cached);
+  }
+  return cached;
+}
+
+function listPlaces(s: Snap): Place[] {
   const out: Place[] = [];
   for (const n of s.nodes) {
     for (const [key, slot] of Object.entries(n.view.data)) {
-      out.push({ node: n.id, hintFor: null, key, slot });
+      out.push({ id: `${n.id}||${key}`, node: n.id, hintFor: null, key, slot });
     }
     for (const [owner, store] of Object.entries(n.view.hints)) {
       for (const [key, slot] of Object.entries(store)) {
-        out.push({ node: n.id, hintFor: owner, key, slot });
+        out.push({ id: `${n.id}|${owner}|${key}`, node: n.id, hintFor: owner, key, slot });
       }
     }
   }
@@ -43,7 +57,6 @@ function places(s: Snap): Place[] {
 const register = (slot: Slot): readonly Version[] => (Array.isArray(slot) ? slot : []);
 const crdt = (slot: Slot): Crdt | null => (Array.isArray(slot) ? null : (slot as Crdt));
 
-const placeId = (p: Place) => `${p.node}|${p.hintFor ?? ""}|${p.key}`;
 const where = (p: Place) =>
   p.hintFor === null ? `${p.node}'s ${p.key}` : `${p.node}'s hint for ${p.hintFor} of ${p.key}`;
 const describe = (v: Version) => `${JSON.stringify(v.value)}@${formatDot(v.dot)} (${v.write})`;
@@ -61,17 +74,23 @@ function changes() {
       last = state as typeof last;
     },
     visit(s: Snap, visit: (p: Place, before: Slot | undefined) => void) {
-      const current = new Map<string, Place>();
-      for (const p of places(s)) {
-        const id = placeId(p);
-        current.set(id, p);
-        const before = last.get(id)?.slot;
-        if (before !== p.slot) visit(p, before);
+      const now = places(s);
+      let known = 0;
+      for (const p of now) {
+        const before = last.get(p.id);
+        if (before !== undefined) known++;
+        if (before?.slot === p.slot) continue;
+        last.set(p.id, p);
+        visit(p, before?.slot);
       }
-      for (const [id, p] of last) {
-        if (!current.has(id)) visit({ ...p, slot: [] }, p.slot);
+      // Places only disappear when hints are handed off; find them only then.
+      if (known === last.size - (now.length - known)) return;
+      const ids = new Set(now.map((p) => p.id));
+      for (const [id, p] of [...last]) {
+        if (ids.has(id)) continue;
+        last.delete(id);
+        visit({ ...p, slot: [] }, p.slot);
       }
-      last = current;
     },
   };
 }

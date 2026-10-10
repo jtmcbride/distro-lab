@@ -78,7 +78,20 @@ function without<T>(record: Record<string, T>, key: string): Record<string, T> {
   return rest;
 }
 
-const digest = (slot: Slot) => hashString32(canonicalJson(slot as never));
+// Stored slots are replaced, never mutated, so a slot's digest can be cached by identity.
+const digests = new WeakMap<object, number>();
+
+/** Fingerprint of a slot's contents (equal contents, equal digest). */
+export function slotDigest(slot: Slot): number {
+  let d = digests.get(slot);
+  if (d === undefined) {
+    d = hashString32(canonicalJson(slot as never));
+    digests.set(slot, d);
+  }
+  return d;
+}
+
+const digest = slotDigest;
 const isRegister = (slot: Slot): slot is readonly Version[] => Array.isArray(slot);
 
 /** What a server holds for a key it has never written. */
