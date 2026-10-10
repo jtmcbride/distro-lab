@@ -44,10 +44,15 @@ const setsArb = historyArb.chain((versions) =>
 );
 const same = (a: readonly Version[], b: readonly Version[]) =>
   expect(canonicalJson(a as never)).toBe(canonicalJson(b as never));
-const write = (node: string, counter: number, context = {}, value = `${node}${counter}`) => ({
+const write = (
+  node: string,
+  counter: number,
+  context: Dynamo.Context | Dynamo.Clock = {},
+  value = `${node}${counter}`,
+): Version => ({
   value,
   dot: { node, counter },
-  context,
+  context: "vv" in context ? (context as Dynamo.Context) : { vv: context, dots: [] },
   write: value,
 });
 
@@ -107,6 +112,21 @@ describe("mergeVersions", () => {
     // A writer that read the first replaces it.
     const third = write("B", 1, contextOf([first]));
     expect(mergeVersions([first, second], [third])).toEqual([second, third]);
+  });
+
+  it("does not let a later write through a coordinator stand for an earlier one", () => {
+    // E's writes 1 and 2 were concurrent; a reader that saw only 2 has not seen 1.
+    const e1 = write("E", 1);
+    const e2 = write("E", 2);
+    const context = contextOf([e2]);
+    expect(Dynamo.contextHas(context, e1.dot)).toBe(false);
+    const next = write("A", 1, context);
+    expect(mergeVersions([e1, e2], [next])).toEqual(
+      [next, e1].sort((a, b) => (a.dot.node < b.dot.node ? -1 : 1)),
+    );
+    // Once the reader has seen both, the context compacts to a plain prefix.
+    expect(contextOf([e1, e2])).toEqual({ vv: { E: 2 }, dots: [] });
+    expect(Dynamo.formatContext(context)).toBe("+E2");
   });
 
   it("returns the first set itself when nothing changes", () => {

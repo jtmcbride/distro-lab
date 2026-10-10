@@ -10,10 +10,12 @@ import { hashString32 } from "../../rng.ts";
 import {
   compareClocks,
   contextOf,
+  contextVector,
+  EMPTY_CONTEXT,
   historyOf,
-  mergeClocks,
+  joinContexts,
   mergeVersions,
-  type Clock,
+  type Context,
   type Version,
 } from "./clock.ts";
 import { preferenceList } from "./ring.ts";
@@ -35,12 +37,17 @@ import {
 export interface PlantedDynamoBugs {
   /** Stamp `context[self] + 1` instead of a fresh counter value (the naive rule). */
   readonly reuseCounter?: boolean;
+  /**
+   * Treat a context as a plain version vector: having seen a coordinator's write 12 counts
+   * as having seen its write 11, which may be a concurrent write the writer never read.
+   */
+  readonly vectorContexts?: boolean;
   /** Replicas keep one version: of concurrent siblings, the larger clock sum wins. */
   readonly lastWriterWins?: boolean;
   /**
-   * Compare versions as plain vector clocks (history against history). With a counter per
-   * coordinator, a write then looks like it includes every earlier write through the same
-   * coordinator, even ones its writer never saw.
+   * Compare versions as plain vector clocks (history against history). A write then looks
+   * like it includes every earlier write through the same coordinator, even ones its writer
+   * never saw.
    */
   readonly plainClocks?: boolean;
   /** Acknowledge a put one replica short of W. */
@@ -56,7 +63,8 @@ const HANDOFF_TIMER = "handoff";
 const SYNC_TIMER = "sync";
 const OP_TIMER_PREFIX = "op:";
 
-const historySum = (v: Version) => Object.values(historyOf(v)).reduce((a, b) => a + b, 0);
+const historySum = (v: Version) =>
+  Object.values(contextVector(historyOf(v))).reduce((a, b) => a + b, 0);
 const sorted = (keys: Iterable<string>) => [...keys].sort();
 /** A copy of `record` without `key`. */
 function without<T>(record: Record<string, T>, key: string): Record<string, T> {
@@ -108,8 +116,11 @@ export function dynamo(
       a,
       b,
       bugs.plainClocks === true
-        ? (x, y) => compareClocks(historyOf(x), historyOf(y)) === "before"
-        : undefined,
+        ? (x, y) =>
+            compareClocks(contextVector(historyOf(x)), contextVector(historyOf(y))) === "before"
+        : bugs.vectorContexts === true
+          ? (x, y) => (contextVector(y.context)[x.dot.node] ?? 0) >= x.dot.counter
+          : undefined,
     );
     if (bugs.lastWriterWins !== true || m.length <= 1) return m;
     const winner = m.reduce((best, v) =>
@@ -156,14 +167,11 @@ export function dynamo(
     const op = m.op;
     let version: Version | null = null;
     if (op.type === "put") {
-      const context = mergeClocks([op.context ?? {}]);
-      let stamp: number;
-      if (bugs.reuseCounter === true) {
-        stamp = (context[ctx.nodeId] ?? 0) + 1;
-        p.counter = Math.max(p.counter, stamp);
-      } else {
-        stamp = ++p.counter;
-      }
+      const context = joinContexts([op.context ?? EMPTY_CONTEXT]);
+      const last = p.counters[op.key] ?? 0;
+      const stamp =
+        bugs.reuseCounter === true ? (contextVector(context)[ctx.nodeId] ?? 0) + 1 : last + 1;
+      p.counters[op.key] = Math.max(last, stamp);
       version = {
         value: op.value,
         dot: { node: ctx.nodeId, counter: stamp },
@@ -419,7 +427,7 @@ export function dynamo(
 
     init(ctx) {
       return start(ctx, {
-        persistent: { counter: 0, requests: 0, data: {}, hints: {} },
+        persistent: { counters: {}, requests: 0, data: {}, hints: {} },
         volatile: freshVolatile(),
       });
     },
@@ -485,7 +493,7 @@ export function dynamo(
 
     view(s): DynamoView {
       return {
-        counter: s.persistent.counter,
+        counters: s.persistent.counters,
         data: s.persistent.data,
         hints: s.persistent.hints,
         pending: Object.keys(s.volatile.pending).length,
@@ -505,17 +513,17 @@ export function dynamoClient(overrides: Partial<RequestClientConfig> = {}) {
       prepare(op, memory) {
         const seen = memory[op.key];
         if (op.type !== "put" || op.context !== undefined || seen === undefined) return op;
-        return { ...op, context: seen as Clock };
+        return { ...op, context: seen as Context };
       },
       observe(op, result, memory) {
         const seen =
           result.type === "get"
             ? contextOf(result.versions)
-            : mergeClocks([
-                op.type === "put" ? (op.context ?? {}) : {},
-                { [result.dot.node]: result.dot.counter },
-              ]);
-        memory[op.key] = mergeClocks([(memory[op.key] ?? {}) as Clock, seen]);
+            : joinContexts(
+                [op.type === "put" ? (op.context ?? EMPTY_CONTEXT) : EMPTY_CONTEXT],
+                [result.dot],
+              );
+        memory[op.key] = joinContexts([(memory[op.key] ?? EMPTY_CONTEXT) as Context, seen]);
       },
     },
   );

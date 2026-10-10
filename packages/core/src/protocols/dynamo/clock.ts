@@ -1,6 +1,6 @@
 import type { NodeId } from "../../protocol.ts";
 
-/** Vector clock: per coordinator, the highest counter of its writes included. Absent = 0. */
+/** Vector clock: per node, a counter. Absent = 0. */
 export type Clock = Readonly<Record<NodeId, number>>;
 
 export type ClockOrder = "before" | "after" | "equal" | "concurrent";
@@ -34,37 +34,75 @@ export function mergeClocks(clocks: readonly Clock[]): Clock {
   return out;
 }
 
-/** Identity of one write: the coordinator that stamped it and that coordinator's counter. */
+/**
+ * Identity of one write to a key: the coordinator that stamped it and that coordinator's
+ * counter for the key.
+ */
 export type Dot = { readonly node: NodeId; readonly counter: number };
 
+export const sameDot = (a: Dot, b: Dot) => a.node === b.node && a.counter === b.counter;
+
+const dotOrder = (a: Dot, b: Dot) =>
+  a.node < b.node ? -1 : a.node > b.node ? 1 : a.counter - b.counter;
+
 /**
- * A stored value, as a dotted version vector (Preguiça et al., 2010): its own `dot` plus the
- * `context` it was written from (the merged history of what the writer had read). A version
- * replaces exactly the versions its context includes. `write` names the client request that
- * produced it (`client#seq`), so a dot reused by another write can be detected.
+ * An exact set of writes (dots): per coordinator, every counter up to `vv[node]`, plus the
+ * individual `dots` beyond it. Kept compact: a dot right after the prefix joins the prefix.
  *
- * Plain vector clocks are not enough when any server coordinates: two writes through one
- * coordinator get counters 1 and 2, and `{A:2}` would claim to include `{A:1}` even if its
- * writer never saw that write.
+ * A plain version vector would not do. A coordinator's writes to a key can be concurrent
+ * (two clients, same coordinator), so having seen its write 12 does not mean having seen its
+ * write 11; `{E:12}` would claim both.
+ */
+export type Context = { readonly vv: Clock; readonly dots: readonly Dot[] };
+
+export const EMPTY_CONTEXT: Context = { vv: {}, dots: [] };
+
+export const contextHas = (c: Context, d: Dot) =>
+  (c.vv[d.node] ?? 0) >= d.counter || c.dots.some((x) => sameDot(x, d));
+
+/** Union of contexts (and extra dots), compacted. */
+export function joinContexts(contexts: readonly Context[], extra: readonly Dot[] = []): Context {
+  const vv: Record<NodeId, number> = { ...mergeClocks(contexts.map((c) => c.vv)) };
+  let dots: Dot[] = [];
+  for (const d of [...contexts.flatMap((c) => c.dots), ...extra]) {
+    if ((vv[d.node] ?? 0) < d.counter && !dots.some((x) => sameDot(x, d))) dots.push(d);
+  }
+  dots.sort(dotOrder);
+  for (let changed = true; changed;) {
+    changed = false;
+    dots = dots.filter((d) => {
+      if (d.counter !== (vv[d.node] ?? 0) + 1) return (vv[d.node] ?? 0) < d.counter;
+      vv[d.node] = d.counter;
+      changed = true;
+      return false;
+    });
+  }
+  return { vv, dots };
+}
+
+/** Highest counter per node: what a plain version vector would claim. */
+export function contextVector(c: Context): Clock {
+  return mergeClocks([c.vv, ...c.dots.map((d) => ({ [d.node]: d.counter }))]);
+}
+
+/**
+ * A stored value, as a dotted version (Preguiça et al., 2010): its own `dot` plus the
+ * `context` it was written from (everything its writer had read). A version replaces
+ * exactly the versions whose dots its context contains. `write` names the client request
+ * that produced it (`client#seq`), so a dot reused by another write can be detected.
  */
 export type Version = {
   readonly value: string;
   readonly dot: Dot;
-  readonly context: Clock;
+  readonly context: Context;
   readonly write: string;
 };
 
-export const sameDot = (a: Dot, b: Dot) => a.node === b.node && a.counter === b.counter;
-
 /** True if `y`'s context includes `x`'s write, so `y` makes `x` obsolete. */
-export const includes = (y: Version, x: Version) => (y.context[x.dot.node] ?? 0) >= x.dot.counter;
+export const includes = (y: Version, x: Version) => contextHas(y.context, x.dot);
 
 /** Everything a version's writer had seen, plus the version itself. */
-export const historyOf = (v: Version): Clock =>
-  mergeClocks([v.context, { [v.dot.node]: v.dot.counter }]);
-
-const dotOrder = (a: Dot, b: Dot) =>
-  a.node < b.node ? -1 : a.node > b.node ? 1 : a.counter - b.counter;
+export const historyOf = (v: Version): Context => joinContexts([v.context], [v.dot]);
 
 /**
  * Joins two sibling sets: keeps every version no other version includes, and one copy of
@@ -95,22 +133,25 @@ export function mergeVersions(
  */
 export function coversWrite(versions: readonly Version[], dot: Dot, write: string): boolean {
   return versions.some((v) =>
-    sameDot(v.dot, dot) ? v.write === write : (v.context[dot.node] ?? 0) >= dot.counter,
+    sameDot(v.dot, dot) ? v.write === write : contextHas(v.context, dot),
   );
 }
 
-/** The context a reader passes back with its next write: the merged history of every sibling. */
-export function contextOf(versions: readonly Version[]): Clock {
-  return mergeClocks(versions.map(historyOf));
-}
-
-/** e.g. `A2.C1` (entries sorted by node). */
-export function formatClock(clock: Clock): string {
-  const parts = Object.keys(clock)
-    .sort()
-    .filter((n) => clock[n]! > 0)
-    .map((n) => `${n}${clock[n]}`);
-  return parts.length === 0 ? "∅" : parts.join(".");
+/** The context a reader passes back with its next write: the history of every sibling. */
+export function contextOf(versions: readonly Version[]): Context {
+  return joinContexts(versions.map(historyOf));
 }
 
 export const formatDot = (d: Dot) => `${d.node}${d.counter}`;
+
+/** e.g. `A2.C1+E4` (prefix entries, then individual dots), or `∅`. */
+export function formatContext(c: Context): string {
+  const prefix = Object.keys(c.vv)
+    .sort()
+    .filter((n) => c.vv[n]! > 0)
+    .map((n) => `${n}${c.vv[n]}`)
+    .join(".");
+  const dots = c.dots.map(formatDot).join(",");
+  if (prefix === "" && dots === "") return "∅";
+  return dots === "" ? prefix : `${prefix}+${dots}`;
+}

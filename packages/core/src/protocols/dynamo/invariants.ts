@@ -86,7 +86,7 @@ function siblingsConcurrent(): Invariant<DynamoView> {
   };
 }
 
-/** A dot names one write, everywhere and forever. */
+/** A dot names one write to its key, everywhere and forever. */
 function uniqueDots(): Invariant<DynamoView> {
   const seen = changes();
   let writes = new Map<string, Version>();
@@ -101,7 +101,7 @@ function uniqueDots(): Invariant<DynamoView> {
     check(s, report) {
       seen.visit(s, (p) => {
         for (const v of p.versions) {
-          const dot = formatDot(v.dot);
+          const dot = `${p.key}@${formatDot(v.dot)}`;
           const known = writes.get(dot);
           if (known === undefined) writes.set(dot, v);
           else if (known !== v && canonicalJson(known) !== canonicalJson(v)) {

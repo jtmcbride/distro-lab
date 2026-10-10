@@ -51,10 +51,16 @@ function replay(states: Step[], records: TraceRecord[][] = [], config = STRICT) 
   return monitor.violations.map((v) => `${v.invariant}@${v.t}`);
 }
 
-const v = (value: string, node: string, counter: number, context = {}, write = value): Version => ({
+const v = (
+  value: string,
+  node: string,
+  counter: number,
+  context: Dynamo.Clock = {},
+  write = value,
+): Version => ({
   value,
   dot: { node, counter },
-  context,
+  context: { vv: context, dots: [] },
   write,
 });
 let nextId = 0;
@@ -109,7 +115,7 @@ describe("Dynamo invariants", () => {
         { A: {}, B: {} },
         { A: { data: { x: [x1] } }, B: {} },
         { A: { data: { x: [x2] } }, B: {} },
-        { A: { data: { x: [x2] } }, B: { data: { y: [v("other", "A", 1, {}, "c2#1")] } } },
+        { A: { data: { x: [x2] } }, B: { data: { x: [v("other", "A", 1, {}, "c2#1")] } } },
       ]),
     ).toEqual(["unique-dots@3"]);
   });

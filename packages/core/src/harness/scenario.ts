@@ -67,8 +67,13 @@ export function defineProtocol<P, V, M, C, View, CP = never, CV = never>(spec: {
   create: (config: CanonicalValue | undefined) => Protocol<P, V, M, C>;
   /** Protocol for client processes, if the protocol serves clients. */
   client?: () => Protocol<CP, CV, M, C>;
-  invariants: () => Invariant<View>[];
-  liveness: (sim: RunnableSimulation, view: (n: NodeId) => View) => string[];
+  /** `config` is the scenario's protocol config, if any (some guarantees depend on it). */
+  invariants: (config: CanonicalValue | undefined) => Invariant<View>[];
+  liveness: (
+    sim: RunnableSimulation,
+    view: (n: NodeId) => View,
+    config: CanonicalValue | undefined,
+  ) => string[];
   workload?: Workload;
   randomConfig?: (rng: Rng) => CanonicalValue;
   formatView?: (view: View) => string;
@@ -99,11 +104,11 @@ export function defineProtocol<P, V, M, C, View, CP = never, CV = never>(spec: {
         actions: scenario.actions as readonly ScheduledAction<C, NetworkChange>[],
         sinks: options?.sinks ?? [],
       });
-      const monitor = new InvariantMonitor<View>(sim, spec.invariants());
+      const monitor = new InvariantMonitor<View>(sim, spec.invariants(scenario.config));
       return {
         sim,
         monitor: monitor as InvariantMonitor<unknown>,
-        liveness: () => spec.liveness(sim, (n) => sim.view(n) as View),
+        liveness: () => spec.liveness(sim, (n) => sim.view(n) as View, scenario.config),
       };
     },
   };

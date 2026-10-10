@@ -190,8 +190,10 @@ write}`, where the dot is the coordinator plus a fresh value of its persistent c
   `(clientId, seq)`. A version replaces exactly the versions its context includes. Plain
   vector clocks are wrong when any server coordinates: two writes through one coordinator
   get `{A:1}` and `{A:2}`, and the second would silently replace the first even if its writer
-  never saw it. Plain clock comparison and the naive `context[coordinator] + 1` stamp are
-  both planted bugs.
+  never saw it. Contexts are exact dot sets (a version vector plus individual dots, kept
+  compact by per-key coordinator counters) for the same reason: having seen a coordinator's
+  write 12 does not mean having seen its write 11. Plain clock comparison, vector contexts
+  and the naive `context[coordinator] + 1` stamp are all planted bugs.
 - **No failure detector.** Coordinators send to the first N, and on timeout either fall back
   to the next servers on the ring with a hint (sloppy quorum) or reply `unavailable` (strict).
   Hints are stored durably, apart from data, and handed off when the intended owner answers.
@@ -213,7 +215,7 @@ write}`, where the dot is the coordinator plus a fresh value of its persistent c
 | 3   | Sloppy quorum and hinted handoff, read repair, anti-entropy                                                                                               | After a partition heals all replicas converge and hints drain; unit test per mechanism                | done   |
 | 4   | Invariants: acknowledged writes durable, unique dots, siblings concurrent, replicas monotonic, reads return written values, reads see acknowledged writes | Each fires on a hand-built violating history                                                          | done   |
 | 5   | Registry entry, workload, random config (N, R, W, sloppy), convergence liveness                                                                           | 10k seeds clean                                                                                       |        |
-| 6   | Planted bugs: reused clock counter, volatile counter, last-writer-wins, plain vector-clock comparison, early ack, overwriting read repair                 | Each caught by the fuzzer and minimized                                                               |        |
+| 6   | Planted bugs: reused counter, volatile counter, last-writer-wins, plain vector clocks, vector contexts, early ack, overwriting read repair                | Each caught by the fuzzer and minimized                                                               | done   |
 | 7   | Scripted examples: concurrent writes make siblings; sloppy quorum stale read vs strict quorum unavailability                                              | Tests assert each outcome                                                                             |        |
 | 8   | CRDT values: PN-counters and OR-sets merged by join; client increment/add/remove; checks for counter bounds and acknowledged adds                         | Planted double-counting merge is caught                                                               |        |
 | 9   | Performance and tooling: incremental checks, `formatView`, `sim run --state`                                                                              | ≥ 40k events/s; step 6 failures are understandable from the CLI                                       |        |

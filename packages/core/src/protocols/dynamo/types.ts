@@ -1,6 +1,6 @@
 import type { ClientMessage } from "../../clients/requestClient.ts";
 import type { NodeId } from "../../protocol.ts";
-import type { Clock, Dot, Version } from "./clock.ts";
+import type { Context, Dot, Version } from "./clock.ts";
 
 export interface DynamoConfig {
   /** Replicas per key. */
@@ -45,7 +45,7 @@ export type DynamoOp =
       readonly type: "put";
       readonly key: string;
       readonly value: string;
-      readonly context?: Clock;
+      readonly context?: Context;
     };
 
 export type DynamoResult =
@@ -58,8 +58,8 @@ export type DynamoResult =
 export type Store = Record<string, readonly Version[]>;
 
 export interface DynamoPersistent {
-  /** Last counter this server stamped into a clock as coordinator. */
-  counter: number;
+  /** Per key, the last counter this server stamped into a dot as coordinator. */
+  counters: Record<string, number>;
   /** Request ids issued as coordinator; durable so replies to an old life never match. */
   requests: number;
   /** Keys this server replicates. */
@@ -94,7 +94,7 @@ export interface DynamoVolatile {
 
 /** Plain-data view for inspectors and invariants. Shares state; never mutate or retain. */
 export type DynamoView = {
-  readonly counter: number;
+  readonly counters: Readonly<Record<string, number>>;
   readonly data: Readonly<Store>;
   readonly hints: Readonly<Record<NodeId, Readonly<Store>>>;
   /** Requests being coordinated. */

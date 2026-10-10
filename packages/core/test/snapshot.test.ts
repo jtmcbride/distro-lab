@@ -64,15 +64,17 @@ function checkRoundTrip(scenario: Scenario, atMs: number): Checkpoint {
 }
 
 describe("checkpoints", () => {
-  it("continue exactly like the original run (random seeds and times)", () => {
-    // SNAPSHOT_SEEDS=1000 for a thorough local run.
-    const seeds = Number(process.env["SNAPSHOT_SEEDS"] ?? 20);
-    const rng = Rng.fromSeed(99);
-    for (let seed = 0; seed < seeds; seed++) {
-      const scenario = scenarioForSeed(registry, seed, { protocol: "raft" });
-      checkRoundTrip(scenario, rng.int(0, scenario.durationMs));
-    }
-  });
+  for (const protocol of ["raft", "dynamo"]) {
+    it(`continue exactly like the original run (${protocol}, random seeds and times)`, () => {
+      // SNAPSHOT_SEEDS=1000 for a thorough local run.
+      const seeds = Number(process.env["SNAPSHOT_SEEDS"] ?? 20);
+      const rng = Rng.fromSeed(99);
+      for (let seed = 0; seed < seeds; seed++) {
+        const scenario = scenarioForSeed(registry, seed, { protocol });
+        checkRoundTrip(scenario, rng.int(0, scenario.durationMs));
+      }
+    });
+  }
 
   // Invariant history must be restored too, or violations found after the checkpoint differ.
   const CAUGHT_AT: Record<string, number> = {
