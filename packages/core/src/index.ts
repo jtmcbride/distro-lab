@@ -71,6 +71,7 @@ export {
   type ClientReply,
   type ClientRequest,
   type RequestClientConfig,
+  type RequestClientHooks,
   type RequestClientPersistent,
   type RequestClientView,
   type RequestClientVolatile,

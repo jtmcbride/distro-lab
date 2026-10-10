@@ -23,6 +23,12 @@ export type ClientReply<R> =
       readonly status: "notLeader";
       /** Who the server believes leads, if anyone. */
       readonly leaderHint: NodeId | null;
+    }
+  | {
+      readonly type: "ClientReply";
+      readonly seq: number;
+      /** The server could not run the request now (e.g. no quorum reachable); try elsewhere. */
+      readonly status: "unavailable";
     };
 
 export type ClientMessage<Op, R> = ClientRequest<Op> | ClientReply<R>;
@@ -38,6 +44,17 @@ export const DEFAULT_REQUEST_CLIENT_CONFIG: RequestClientConfig = {
   requestTimeoutMs: 400,
   noLeaderBackoffMs: 50,
 };
+
+/**
+ * Optional protocol-specific behavior. `memory` is the client's own scratch space (volatile,
+ * plain data), e.g. the version context each key was last read at.
+ */
+export interface RequestClientHooks<Op, R> {
+  /** Rewrites an operation as it starts, before its `invoke` is recorded. */
+  prepare?(op: Op, memory: Record<string, CanonicalValue>): Op;
+  /** Learns from a completed operation. */
+  observe?(op: Op, result: R, memory: Record<string, CanonicalValue>): void;
+}
 
 export interface RequestClientPersistent {
   /**
@@ -61,6 +78,7 @@ export interface RequestClientVolatile<Op> {
   current: InFlight<Op> | null;
   leaderHint: NodeId | null;
   completed: number;
+  memory: Record<string, CanonicalValue>;
 }
 
 export type RequestClientView = {
@@ -87,6 +105,7 @@ const BACKOFF_TIMER = "backoff";
  */
 export function requestClient<Op, R, M extends { readonly type: string } = ClientMessage<Op, R>>(
   overrides: Partial<RequestClientConfig> = {},
+  hooks: RequestClientHooks<Op, R> = {},
 ): Protocol<RequestClientPersistent, RequestClientVolatile<Op>, M, Op> {
   const config = { ...DEFAULT_REQUEST_CLIENT_CONFIG, ...overrides };
   type Ctx = NodeContext<M>;
@@ -107,8 +126,9 @@ export function requestClient<Op, R, M extends { readonly type: string } = Clien
   function startNext(ctx: Ctx, s: State): void {
     const v = s.volatile;
     if (v.current !== null) return;
-    const op = v.queue.shift();
-    if (op === undefined) return;
+    const queued = v.queue.shift();
+    if (queued === undefined) return;
+    const op = hooks.prepare?.(queued, v.memory) ?? queued;
     const seq = s.persistent.nextSeq++;
     const target = v.leaderHint ?? ctx.rng.pick(ctx.peers);
     v.current = { seq, op, target, attempts: 0, invokedAt: ctx.now };
@@ -126,22 +146,27 @@ export function requestClient<Op, R, M extends { readonly type: string } = Clien
     send(ctx, req);
   }
 
+  const freshVolatile = (): RequestClientVolatile<Op> => ({
+    queue: [],
+    current: null,
+    leaderHint: null,
+    completed: 0,
+    memory: {},
+  });
+
   return {
     name: "request-client",
 
     init() {
       return {
         persistent: { nextSeq: 1 },
-        volatile: { queue: [], current: null, leaderHint: null, completed: 0 },
+        volatile: freshVolatile(),
       };
     },
 
     recover(_ctx, persistent) {
       // Queued and in-flight operations were in memory and are gone.
-      return {
-        persistent,
-        volatile: { queue: [], current: null, leaderHint: null, completed: 0 },
-      };
+      return { persistent, volatile: freshVolatile() };
     },
 
     onClientCommand(ctx, s, op) {
@@ -171,6 +196,7 @@ export function requestClient<Op, R, M extends { readonly type: string } = Clien
         s.volatile.leaderHint = from;
         s.volatile.current = null;
         s.volatile.completed++;
+        hooks.observe?.(req.op, reply.result, s.volatile.memory);
         ctx.annotate("complete", {
           seq: req.seq,
           result: reply.result as CanonicalValue,
@@ -182,8 +208,9 @@ export function requestClient<Op, R, M extends { readonly type: string } = Clien
       }
 
       // notLeader: follow a useful hint right away, otherwise back off and try elsewhere.
-      if (from !== req.target) return; // stale redirect from an earlier attempt
-      const hint = reply.leaderHint;
+      // unavailable: back off and try elsewhere.
+      if (from !== req.target) return; // stale reply to an earlier attempt
+      const hint = reply.status === "notLeader" ? reply.leaderHint : null;
       if (hint !== null && hint !== from && ctx.peers.includes(hint)) {
         s.volatile.leaderHint = hint;
         retry(ctx, s, "redirect", hint);

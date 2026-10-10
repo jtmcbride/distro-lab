@@ -1,12 +1,11 @@
-import { canonicalJson } from "../../canonical.ts";
 import type { NodeId } from "../../protocol.ts";
 
-/** Vector clock: per coordinator, the counter of the latest write it stamped. Absent = 0. */
+/** Vector clock: per coordinator, the highest counter of its writes included. Absent = 0. */
 export type Clock = Readonly<Record<NodeId, number>>;
 
 export type ClockOrder = "before" | "after" | "equal" | "concurrent";
 
-/** How `a` relates to `b`: "before" means b descends from a. */
+/** How `a` relates to `b`: "before" means b includes everything a does, and more. */
 export function compareClocks(a: Clock, b: Clock): ClockOrder {
   let less = false;
   let greater = false;
@@ -26,7 +25,7 @@ export function compareClocks(a: Clock, b: Clock): ClockOrder {
   return "equal";
 }
 
-/** Entry-wise maximum. */
+/** Entry-wise maximum (zero entries are left out). */
 export function mergeClocks(clocks: readonly Clock[]): Clock {
   const out: Record<NodeId, number> = {};
   for (const c of clocks) {
@@ -35,59 +34,74 @@ export function mergeClocks(clocks: readonly Clock[]): Clock {
   return out;
 }
 
-/**
- * A stored value. `write` names the client request that produced it (`client#seq`), so a
- * clock shared by two different writes can be detected.
- */
-export interface Version {
-  readonly value: string;
-  readonly clock: Clock;
-  readonly write: string;
-}
-
-const clockKey = (v: Version) => canonicalJson(v.clock);
+/** Identity of one write: the coordinator that stamped it and that coordinator's counter. */
+export type Dot = { readonly node: NodeId; readonly counter: number };
 
 /**
- * Joins two sibling sets: keeps every version that no other version strictly dominates, and
- * one copy of each clock (the first seen, preferring `a`). The result is sorted by clock, so
- * replicas holding the same versions hold identical arrays. Returns `a` itself when `b` adds
- * nothing, so callers can detect change by identity.
+ * A stored value, as a dotted version vector (Preguiça et al., 2010): its own `dot` plus the
+ * `context` it was written from (the merged history of what the writer had read). A version
+ * replaces exactly the versions its context includes. `write` names the client request that
+ * produced it (`client#seq`), so a dot reused by another write can be detected.
  *
- * `dominated(x, y)` decides whether y makes x obsolete; it exists for a planted bug.
+ * Plain vector clocks are not enough when any server coordinates: two writes through one
+ * coordinator get counters 1 and 2, and `{A:2}` would claim to include `{A:1}` even if its
+ * writer never saw that write.
+ */
+export type Version = {
+  readonly value: string;
+  readonly dot: Dot;
+  readonly context: Clock;
+  readonly write: string;
+};
+
+export const sameDot = (a: Dot, b: Dot) => a.node === b.node && a.counter === b.counter;
+
+/** True if `y`'s context includes `x`'s write, so `y` makes `x` obsolete. */
+export const includes = (y: Version, x: Version) => (y.context[x.dot.node] ?? 0) >= x.dot.counter;
+
+/** Everything a version's writer had seen, plus the version itself. */
+export const historyOf = (v: Version): Clock =>
+  mergeClocks([v.context, { [v.dot.node]: v.dot.counter }]);
+
+const dotOrder = (a: Dot, b: Dot) =>
+  a.node < b.node ? -1 : a.node > b.node ? 1 : a.counter - b.counter;
+
+/**
+ * Joins two sibling sets: keeps every version no other version includes, and one copy of
+ * each dot (the first seen, preferring `a`). The result is sorted by dot, so replicas holding
+ * the same versions hold identical arrays. Returns `a` itself when `b` adds nothing, so
+ * callers can detect change by identity.
+ *
+ * `obsolete(x, y)` decides whether y replaces x; it is replaceable for planted bugs.
  */
 export function mergeVersions(
   a: readonly Version[],
   b: readonly Version[],
-  dominated: (x: Clock, y: Clock) => boolean = (x, y) => compareClocks(x, y) === "before",
+  obsolete: (x: Version, y: Version) => boolean = (x, y) => includes(y, x),
 ): readonly Version[] {
   if (b.length === 0) return a;
-  const byClock = new Map<string, Version>();
-  for (const v of [...a, ...b]) {
-    const k = clockKey(v);
-    if (!byClock.has(k)) byClock.set(k, v);
-  }
-  const all = [...byClock.entries()];
-  const kept = all.filter(([, v]) => !all.some(([, w]) => w !== v && dominated(v.clock, w.clock)));
-  kept.sort(([x], [y]) => (x < y ? -1 : x > y ? 1 : 0));
-  const result = kept.map(([, v]) => v);
+  const unique: Version[] = [];
+  for (const v of [...a, ...b]) if (!unique.some((u) => sameDot(u.dot, v.dot))) unique.push(v);
+  const result = unique
+    .filter((v) => !unique.some((w) => w !== v && obsolete(v, w)))
+    .sort((x, y) => dotOrder(x.dot, y.dot));
   if (result.length === a.length && result.every((v, i) => v === a[i])) return a;
   return result;
 }
 
 /**
- * True if `versions` still accounts for the write `(clock, write)`: some version descends
- * from it, or it is there itself. An equal clock on a different write does not count.
+ * True if `versions` still accounts for the write `(dot, write)`: it is there itself, or
+ * some version replaced it. The same dot on a different write does not count.
  */
-export function coversWrite(versions: readonly Version[], clock: Clock, write: string): boolean {
-  return versions.some((v) => {
-    const order = compareClocks(clock, v.clock);
-    return order === "before" || (order === "equal" && v.write === write);
-  });
+export function coversWrite(versions: readonly Version[], dot: Dot, write: string): boolean {
+  return versions.some((v) =>
+    sameDot(v.dot, dot) ? v.write === write : (v.context[dot.node] ?? 0) >= dot.counter,
+  );
 }
 
-/** The context a reader passes back with its next write: the merge of every sibling's clock. */
+/** The context a reader passes back with its next write: the merged history of every sibling. */
 export function contextOf(versions: readonly Version[]): Clock {
-  return mergeClocks(versions.map((v) => v.clock));
+  return mergeClocks(versions.map(historyOf));
 }
 
 /** e.g. `A2.C1` (entries sorted by node). */
@@ -98,3 +112,5 @@ export function formatClock(clock: Clock): string {
     .map((n) => `${n}${clock[n]}`);
   return parts.length === 0 ? "∅" : parts.join(".");
 }
+
+export const formatDot = (d: Dot) => `${d.node}${d.counter}`;
