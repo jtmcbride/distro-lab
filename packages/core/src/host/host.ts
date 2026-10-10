@@ -183,6 +183,7 @@ export class SimulationHost {
   /** Replaces the simulation (and all branches); the next frame resets the UI. */
   load(scenario: Scenario): void {
     this.timelines = new Map();
+    this.nextTimeline = 0;
     this.tl = this.newTimeline({
       scenario,
       name: "main",

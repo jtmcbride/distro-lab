@@ -81,7 +81,7 @@ describe("time travel", () => {
         else if (kind === 6)
           host.act({ type: rng.chance(0.5) ? "crash" : "recover", node: rng.pick(scenario.nodes) });
         else host.stepToNotable();
-        expect(host.checkpointCount).toBeLessThanOrEqual(6 + 1);
+        expect(host.checkpointCount).toBeLessThanOrEqual(6);
         expectMatchesReplay(host, ui);
       }
     }

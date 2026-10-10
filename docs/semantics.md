@@ -76,6 +76,28 @@ probability, duplication probability, and an `up` flag. Faults are layered:
 Random draws happen only for non-zero fault parameters, in a fixed order
 (loss, delay, duplicate, delay), so a fault-free link consumes no randomness.
 
+## Checkpoints and branches
+
+A checkpoint captures everything that determines the rest of a run: the clock, counters,
+event queue, every RNG stream, each process's state, timers, up flag and incarnation, the
+network's settings and partitions, which actions have run, and the invariant monitor's
+history. Restoring one and continuing produces exactly the records the original run
+produced. The trace hash is not part of a checkpoint; the host keeps the records instead.
+
+A branch keeps its parent's actions up to the fork and can change only actions that have
+not run yet. Added actions must be later than the current time, as live actions are, so a
+branch always equals a fresh replay of its own scenario.
+
+## Causal past
+
+The causal past of an event `e` at process `p` (Lamport's happens-before) is every earlier
+event at `p` plus, for each message `p` received before `e`, the causal past of its send.
+Drops are not in it, because a message that never arrived changed no state. Network changes
+are global, so they are not in it either. Faults can still shape the past by omission: when
+a message sent in the past was dropped because its receiver was down, the receiver's crash
+is a cause. When it was dropped because its link was cut, the latest network change before
+the drop is a cause. A violation's past is taken over all the processes it names.
+
 ## Not modeled (yet)
 
 Slow node processing, clock drift, disk faults and delayed persistence, bandwidth,

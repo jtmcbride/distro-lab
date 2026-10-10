@@ -120,7 +120,11 @@ export function applyFrame(frame: Frame): void {
           selectedProcess: s.pendingSelection.process,
           pendingSelection: null,
         }
-      : frame.reset || (s.selectedRecord !== null && s.selectedRecord >= trace.length)
+      : frame.reset ||
+          (s.selectedRecord !== null &&
+            (s.selectedRecord >= trace.length ||
+              // Records past a truncation are different ones (e.g. another branch's).
+              (frame.truncateAfter !== null && s.selectedRecord > frame.truncateAfter)))
         ? { selectedRecord: null }
         : {}),
   }));

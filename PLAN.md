@@ -109,7 +109,7 @@ Design decisions:
 - **Live actions are scheduled actions.** Actions sort ahead of protocol events at equal
   times and live ones are stamped 1µs after the last processed instant, so a live session
   and its replay order every event identically.
-- **Seek by replaying from zero** (cheap at these sizes); snapshots and branching are phase 4.
+- **Seek by replaying from zero** (cheap at these sizes); phase 4 replaced this with checkpoints.
 - **Animation follows the schedule**: send records carry each copy's arrival time; drops are
   shown only when the drop record exists.
 - **Custom SVG cluster view**, **Canvas space-time diagram**, Zustand store, virtualized lists.
@@ -128,9 +128,49 @@ Design decisions:
 
 Out of scope: snapshots, branching what-if comparisons, minimization in the UI (phase 4).
 
+## Phase 4 — Time travel
+
+Goal: move freely through a run (including backwards), fork what-if branches at any moment,
+compare branches, shrink failures in the browser, and see the causal past of any event.
+
+Design decisions:
+
+- **Checkpoints are a speed-up, not a source of truth.** A checkpoint is the simulation's and
+  the invariant monitor's state, copied by one `structuredClone` (invariant history points at
+  log entries in protocol state and detects changes by identity). Property tests check that
+  continuing from a checkpoint equals the original run and a fresh replay.
+- **Checkpoints at fixed event counts** (multiples of a spacing that doubles when a cap is
+  reached), so a replay recreates the same ones and the cap bounds memory.
+- **A branch is a timeline**: its scenario, actions, known trace and checkpoints. Forks share
+  the parent's checkpoints and records; all branches share one simulation object.
+- **What-ifs change only actions** (and, for minimized variants, network defaults), never
+  node state directly, so every branch is still a scenario that exports and replays exactly.
+- **Causality is happens-before plus omissions**: the past of an event follows program order
+  and messages backwards; a crash or link cut that dropped a message in it is a cause too.
+
+| #   | Work                                                                                          | Exit criterion                                                           | Status |
+| --- | --------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ | ------ |
+| 1   | Snapshot engine: save/restore for the simulation, network, RNGs, queue and invariant history  | 1k seeds: restoring at a random time continues identically               | done   |
+| 2   | Host time travel: automatic checkpoints, seek from the nearest one, step back, live scrubbing | Seek on a 10-minute 5-node run with clients < 50ms                       | done   |
+| 3   | Branches in core: fork, edit future actions, switch at the same time                          | A branch shares its parent's trace up to the fork; matches a fresh run   | done   |
+| 4   | Branch UI: branch bar, fork here, schedule editor                                             | Fork Figure 8 before a crash, remove it, get a different outcome         | done   |
+| 5   | Compare: first divergence, outcome summary, per-process state diff                            | The divergence point jumps to the right record                           | done   |
+| 6   | Minimize in the UI: background worker, progress, cancel, result opens as a branch             | A fuzz failure minimizes in the browser to the same result as `sim fuzz` | done   |
+| 7   | Causal explanations: causal past of a violation or event, dimmed views, faults in it          | For the planted bugs, the explanation contains every minimized fault     | done   |
+| 8   | Hardening: e2e for all of the above, memory cap, docs                                         | CI green                                                                 | done   |
+
+Results: on a 10-minute, 5-node run with a client (155k events), seeks take 13ms median and
+38ms max (a full replay takes 2.3s); its 78 checkpoints use 2.4 MB. Restore-and-continue
+matches the original run for 1,000 random seeds and times, and random sequences of seeks,
+steps back, forks, edits and switches always match a fresh replay of the branch.
+
+Finding: a pure happens-before cone missed real causes. Crashes matter by omission (a
+crashed node does not vote or store an entry), so the explanation also follows dropped
+messages back to the crash or link cut that dropped them. And `acknowledged-writes-replicated`
+now reports every server, since its claim ("only 2 of 5 store it") reads every log.
+
 ## Later phases
 
-4. Time travel: periodic snapshots, replay, branching what-if runs, causal explanations.
 5. Eventual-consistency protocol (Dynamo-style), then vector clocks/CRDTs.
 6. Linearizability checking (Porcupine-style) for the KV store; docs, tutorials, GitHub Pages.
 
