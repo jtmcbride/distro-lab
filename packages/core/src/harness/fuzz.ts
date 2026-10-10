@@ -20,6 +20,7 @@ export function scenarioForSeed(
   const entry = registry.get(options.protocol);
   if (entry === undefined) throw new Error(`unknown protocol "${options.protocol}"`);
   return generateScenario(seed, {
+    ...(entry.stabilizeMs === undefined ? {} : { stabilizeMs: entry.stabilizeMs }),
     ...options,
     workload: entry.workload,
     randomConfig: entry.randomConfig,

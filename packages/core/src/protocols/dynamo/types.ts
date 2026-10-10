@@ -14,7 +14,7 @@ export interface DynamoConfig {
    * (writes leave a hint for the replica they stand in for). Strict: reply `unavailable`.
    */
   readonly sloppy: boolean;
-  /** How long a coordinator waits for replies before falling back or giving up. */
+  /** How long a coordinator waits for replies before asking again, and again before giving up. */
   readonly requestTimeoutMs: number;
   /** Fix stale replicas a get noticed. */
   readonly readRepair: boolean;
@@ -29,7 +29,7 @@ export const DEFAULT_DYNAMO_CONFIG: DynamoConfig = {
   r: 2,
   w: 2,
   sloppy: true,
-  requestTimeoutMs: 100,
+  requestTimeoutMs: 200,
   readRepair: true,
   handoffIntervalMs: 200,
   antiEntropyIntervalMs: 500,
@@ -79,8 +79,8 @@ export interface Coordination {
   readonly version: Version | null;
   /** Servers asked so far, each mapped to the replica it stands in for (itself for replicas). */
   readonly standsFor: Record<NodeId, NodeId>;
-  /** Servers asked whose missing answer was already covered by a fallback. */
-  readonly replaced: NodeId[];
+  /** 0 until the first timeout, then 1 (a coordinator asks twice, then gives up). */
+  round: number;
   /** Puts: who stored the version. Gets: what each server answered. */
   readonly answers: Record<NodeId, readonly Version[]>;
   replied: boolean;
@@ -90,6 +90,8 @@ export interface DynamoVolatile {
   pending: Record<string, Coordination>;
   /** A handoff attempt is scheduled. */
   handoffArmed: boolean;
+  /** Anti-entropy partners are taken in turn (from a random start): index of the next. */
+  syncNext: number;
 }
 
 /** Plain-data view for inspectors and invariants. Shares state; never mutate or retain. */

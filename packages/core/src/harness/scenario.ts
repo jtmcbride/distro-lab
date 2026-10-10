@@ -43,6 +43,8 @@ export interface ProtocolEntry {
   readonly workload?: Workload;
   /** Random protocol settings for generated scenarios, to widen what fuzzing explores. */
   readonly randomConfig?: (rng: Rng) => CanonicalValue;
+  /** Fault-free time at the end of generated scenarios, if the generator's default is too short. */
+  readonly stabilizeMs?: number;
   /** One-line summary of a server's view for CLI output; defaults to its JSON. */
   readonly formatView?: (view: CanonicalValue) => string;
   /** Hand-written scenarios by name, e.g. "figure8". */
@@ -76,6 +78,7 @@ export function defineProtocol<P, V, M, C, View, CP = never, CV = never>(spec: {
   ) => string[];
   workload?: Workload;
   randomConfig?: (rng: Rng) => CanonicalValue;
+  stabilizeMs?: number;
   formatView?: (view: View) => string;
   examples?: Readonly<Record<string, (protocol: string) => Scenario>>;
 }): ProtocolEntry {
@@ -84,6 +87,7 @@ export function defineProtocol<P, V, M, C, View, CP = never, CV = never>(spec: {
     description: spec.description,
     ...(spec.workload === undefined ? {} : { workload: spec.workload }),
     ...(spec.randomConfig === undefined ? {} : { randomConfig: spec.randomConfig }),
+    ...(spec.stabilizeMs === undefined ? {} : { stabilizeMs: spec.stabilizeMs }),
     ...(spec.formatView === undefined
       ? {}
       : { formatView: spec.formatView as (view: CanonicalValue) => string }),

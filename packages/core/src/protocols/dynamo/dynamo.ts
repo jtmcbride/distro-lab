@@ -187,7 +187,7 @@ export function dynamo(
       seq: m.seq,
       version,
       standsFor: {},
-      replaced: [],
+      round: 0,
       answers: {},
       replied: false,
     };
@@ -282,7 +282,11 @@ export function dynamo(
     else storeData(s, key, versions);
   }
 
-  /** No quorum yet: ask fallbacks for the silent servers (sloppy), or give up (strict). */
+  /**
+   * No quorum yet. The first time, ask again: sloppy quorums ask the next fallback on the
+   * ring for each silent server (with a hint for the replica it stands in for), strict ones
+   * repeat the request to the silent replicas. The second time, give up.
+   */
   function onRequestTimeout(ctx: Ctx, s: State, id: string): void {
     const c = s.volatile.pending[id];
     if (c === undefined) return;
@@ -290,26 +294,25 @@ export function dynamo(
       finish(ctx, s, c);
       return;
     }
-    if (config.sloppy) {
-      const silent = Object.keys(c.standsFor).filter(
-        (n) => !Object.hasOwn(c.answers, n) && !c.replaced.includes(n),
-      );
-      const unused = prefs(ctx, c.key).filter((n) => !Object.hasOwn(c.standsFor, n));
-      let asked = 0;
+    if (c.round === 0) {
+      c.round = 1;
+      const silent = Object.keys(c.standsFor).filter((n) => !Object.hasOwn(c.answers, n));
+      const unused = config.sloppy
+        ? prefs(ctx, c.key).filter((n) => !Object.hasOwn(c.standsFor, n))
+        : [];
       for (const n of silent) {
-        const fallback = unused.shift();
-        if (fallback === undefined) break;
         const owner = c.standsFor[n]!;
-        c.replaced.push(n);
-        ctx.annotate("fallback", { key: c.key, to: fallback, for: owner });
-        ask(ctx, s, c, fallback, owner);
-        asked++;
+        const fallback = unused.shift();
+        if (fallback === undefined) {
+          ask(ctx, s, c, n, owner);
+        } else {
+          ctx.annotate("fallback", { key: c.key, to: fallback, for: owner });
+          ask(ctx, s, c, fallback, owner);
+        }
       }
-      if (asked > 0) {
-        ctx.setTimer(OP_TIMER_PREFIX + id, config.requestTimeoutMs);
-        progress(ctx, s, c);
-        return;
-      }
+      ctx.setTimer(OP_TIMER_PREFIX + id, config.requestTimeoutMs);
+      progress(ctx, s, c);
+      return;
     }
     s.volatile.pending = without(s.volatile.pending, id);
     ctx.annotate("unavailable", { key: c.key, answered: Object.keys(c.answers).length });
@@ -365,7 +368,9 @@ export function dynamo(
   }
 
   function startSync(ctx: Ctx, s: State): void {
-    const peer = ctx.rng.pick(ctx.peers);
+    // Taking peers in turn bounds how long any pair goes without comparing notes.
+    const peer = ctx.peers[s.volatile.syncNext % ctx.peers.length]!;
+    s.volatile.syncNext = (s.volatile.syncNext + 1) % ctx.peers.length;
     const digests: Record<string, number> = {};
     for (const key of sorted(Object.keys(s.persistent.data))) {
       if (shared(ctx, key, peer)) digests[key] = digest(s.persistent.data[key]!);
@@ -411,7 +416,11 @@ export function dynamo(
 
   // ---------------------------------------------------------------------------------------
 
-  const freshVolatile = (): DynamoVolatile => ({ pending: {}, handoffArmed: false });
+  const freshVolatile = (ctx: Ctx): DynamoVolatile => ({
+    pending: {},
+    handoffArmed: false,
+    syncNext: ctx.peers.length === 0 ? 0 : ctx.rng.int(0, ctx.peers.length - 1),
+  });
 
   function start(ctx: Ctx, s: State): State {
     if (config.n > servers(ctx).length) {
@@ -428,13 +437,13 @@ export function dynamo(
     init(ctx) {
       return start(ctx, {
         persistent: { counters: {}, requests: 0, data: {}, hints: {} },
-        volatile: freshVolatile(),
+        volatile: freshVolatile(ctx),
       });
     },
 
     recover(ctx, persistent) {
       // Requests being coordinated are lost; their clients time out and retry elsewhere.
-      return start(ctx, { persistent, volatile: freshVolatile() });
+      return start(ctx, { persistent, volatile: freshVolatile(ctx) });
     },
 
     onTimer(ctx, s, key) {
@@ -505,10 +514,13 @@ export function dynamo(
 /**
  * The standard client, remembering per key the context of what it last read or wrote and
  * attaching it to its next put of that key (unless the put names a context itself).
+ *
+ * Its timeout outlasts a coordinator's two rounds: a retry through another coordinator
+ * writes the value again under a new dot, which becomes a sibling.
  */
 export function dynamoClient(overrides: Partial<RequestClientConfig> = {}) {
   return requestClient<DynamoOp, DynamoResult, DynamoMessage>(
-    { requestTimeoutMs: 500, ...overrides },
+    { requestTimeoutMs: 600, ...overrides },
     {
       prepare(op, memory) {
         const seen = memory[op.key];

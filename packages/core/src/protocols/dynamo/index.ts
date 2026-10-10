@@ -6,3 +6,9 @@ export { dynamoInvariants, promisesReadYourWrites } from "./invariants.ts";
 export { dynamoWorkload } from "./workload.ts";
 export { dynamoConverged, formatDynamoView, formatVersions } from "./registry.ts";
 export { DYNAMO_BUGS, type DynamoBug } from "./bugs.ts";
+export {
+  concurrentWritesScenario,
+  DYNAMO_EXAMPLES,
+  sloppyQuorumScenario,
+  strictQuorumScenario,
+} from "./scenarios.ts";

@@ -91,6 +91,7 @@ export type RequestClientView = {
 
 const RETRY_TIMER = "retry";
 const BACKOFF_TIMER = "backoff";
+const UNAVAILABLE_TIMER = "unavailable";
 
 /**
  * A client process that issues operations one at a time, follows leader redirects, and
@@ -181,6 +182,8 @@ export function requestClient<Op, R, M extends { readonly type: string } = Clien
         retry(ctx, s, "timeout");
       } else if (key === BACKOFF_TIMER) {
         retry(ctx, s, "no-leader");
+      } else if (key === UNAVAILABLE_TIMER) {
+        retry(ctx, s, "unavailable");
       }
     },
 
@@ -207,10 +210,15 @@ export function requestClient<Op, R, M extends { readonly type: string } = Clien
         return;
       }
 
-      // notLeader: follow a useful hint right away, otherwise back off and try elsewhere.
-      // unavailable: back off and try elsewhere.
       if (from !== req.target) return; // stale reply to an earlier attempt
-      const hint = reply.status === "notLeader" ? reply.leaderHint : null;
+      if (reply.status === "unavailable") {
+        // The server could not serve it now: back off and try elsewhere.
+        ctx.cancelTimer(RETRY_TIMER);
+        ctx.setTimer(UNAVAILABLE_TIMER, config.noLeaderBackoffMs);
+        return;
+      }
+      // notLeader: follow a useful hint right away, otherwise back off and try elsewhere.
+      const hint = reply.leaderHint;
       if (hint !== null && hint !== from && ctx.peers.includes(hint)) {
         s.volatile.leaderHint = hint;
         retry(ctx, s, "redirect", hint);

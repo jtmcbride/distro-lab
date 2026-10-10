@@ -8,6 +8,7 @@ import { DYNAMO_BUGS } from "./bugs.ts";
 import { dynamo, dynamoClient } from "./dynamo.ts";
 import { dynamoInvariants } from "./invariants.ts";
 import { replicasOf } from "./ring.ts";
+import { DYNAMO_EXAMPLES } from "./scenarios.ts";
 import { DEFAULT_DYNAMO_CONFIG, type DynamoConfig, type DynamoView } from "./types.ts";
 import { dynamoWorkload } from "./workload.ts";
 
@@ -93,6 +94,10 @@ export function dynamoEntries(): ProtocolEntry[] {
         };
       },
       workload: dynamoWorkload,
+      // Every operation is a quorum round trip, so on a lossy network a client that was cut
+      // off drains its backlog more slowly than through a Raft leader.
+      stabilizeMs: 12_000,
+      examples: DYNAMO_EXAMPLES,
       liveness: (sim, view, config) => dynamoConverged(sim, view, configOf(config)),
     });
   return [

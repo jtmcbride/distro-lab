@@ -25,9 +25,9 @@ describe("Dynamo chaos testing", () => {
     "volatile-counter": [0, "replicas-monotonic"],
     "last-writer-wins": [0, "replicas-monotonic"],
     "plain-clocks": [0, "replicas-monotonic"],
-    "vector-contexts": [0, "replicas-monotonic"],
+    "vector-contexts": [2, "replicas-monotonic"],
     "early-ack": [0, "acknowledged-writes-durable"],
-    "overwriting-repair": [19, "replicas-monotonic"],
+    "overwriting-repair": [30, "replicas-monotonic"],
   };
   for (const [bug, [seed, invariant]] of Object.entries(CAUGHT_AT)) {
     it(`catches the planted bug "${bug}" and minimizes the counterexample`, () => {
