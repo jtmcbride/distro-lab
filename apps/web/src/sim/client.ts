@@ -26,16 +26,13 @@ worker.onmessage = (event: MessageEvent<FromWorker>) => {
         if (scrubNext !== null) send({ type: "seek", timeMs: scrubNext });
         scrubNext = null;
       }
-      const s = useSim.getState();
-      if (s.jumpToViolation && m.frame.jumped && m.frame.now > 0) {
-        useSim.setState({ jumpToViolation: false });
-        const first = s.violations[0];
+      if (m.cause === "seekFirstViolation") {
+        const first = useSim.getState().violations[0];
         if (first !== undefined) {
-          // Applied by the frame the seek produces.
           useSim.setState({
-            pendingSelection: { record: first.recordId, process: first.nodes[0] ?? null },
+            selectedRecord: first.recordId,
+            selectedProcess: first.nodes[0] ?? null,
           });
-          sim.seekRecord(first.recordId);
         }
       }
       break;
@@ -65,7 +62,6 @@ export const sim = {
   load(scenario: Scenario, name = "Scenario", options: { jumpToViolation?: boolean } = {}) {
     useSim.setState({
       scenarioName: name,
-      jumpToViolation: options.jumpToViolation === true,
       protocol: scenario.protocol,
       config: scenario.config,
       durationMs: scenario.durationMs,
@@ -73,8 +69,10 @@ export const sim = {
       selectedRecord: null,
     });
     send({ type: "load", scenario });
-    if (options.jumpToViolation === true) send({ type: "seek", timeMs: scenario.durationMs });
+    if (options.jumpToViolation === true) sim.jumpToFirstViolation();
   },
+  /** Runs to the end of the scenario and back to its first violation, selecting it. */
+  jumpToFirstViolation: () => send({ type: "seekFirstViolation" }),
   play: () => send({ type: "play" }),
   pause: () => send({ type: "pause" }),
   setSpeed: (speed: number) => send({ type: "speed", speed }),
@@ -100,6 +98,8 @@ export const sim = {
   switchBranch: (id: number) => send({ type: "switchBranch", id }),
   deleteBranch: (id: number) => send({ type: "deleteBranch", id }),
   renameBranch: (id: number, name: string) => send({ type: "renameBranch", id, name }),
+  /** Adds a variant of the scenario (e.g. a minimized one) as a branch and switches to it. */
+  addBranch: (name: string, scenario: Scenario) => send({ type: "addBranch", name, scenario }),
   /** Replaces the current branch's actions (only ones that have not run may change). */
   editActions: (actions: readonly ScenarioAction[]) => send({ type: "editActions", actions }),
   /** The current branch next to `other` at the current time. */

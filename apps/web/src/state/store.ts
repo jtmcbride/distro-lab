@@ -14,8 +14,6 @@ export interface SimState {
   readonly protocol: string;
   /** Display name of the loaded scenario. */
   readonly scenarioName: string;
-  /** After an import or share link, jump to the first violation once one is known. */
-  readonly jumpToViolation: boolean;
   /** Protocol config of the loaded scenario (e.g. Raft timeouts). */
   readonly config: CanonicalValue | undefined;
   readonly now: number;
@@ -32,6 +30,20 @@ export interface SimState {
   readonly branch: number;
   /** The current branch's scenario actions. */
   readonly actions: readonly ScenarioAction[];
+  /** Progress of a running minimization. */
+  readonly minimizing: { runs: number; actions: number; total: number } | null;
+  /** Result of the last minimization, until dismissed. */
+  readonly minimized:
+    | {
+        kind: string;
+        total: number;
+        /** Actions from here on are repairs for the liveness check, which are always kept. */
+        repairsFrom: number;
+        kept: readonly ScenarioAction[];
+        removed: readonly ScenarioAction[];
+      }
+    | { problem: string }
+    | null;
   /** Branch shown in the comparison panel, if open. */
   readonly compareWith: number | null;
   /** Bumped whenever `trace` changes. */
@@ -48,7 +60,6 @@ export const useSim = create<SimState>(() => ({
   loaded: false,
   protocol: "raft",
   scenarioName: "",
-  jumpToViolation: false,
   config: undefined,
   now: 0,
   durationMs: 0,
@@ -63,6 +74,8 @@ export const useSim = create<SimState>(() => ({
   branch: 0,
   actions: [],
   compareWith: null,
+  minimizing: null,
+  minimized: null,
   traceVersion: 0,
   error: null,
   selectedProcess: null,

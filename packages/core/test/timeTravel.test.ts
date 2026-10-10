@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   canonicalJson,
   defaultRegistry,
+  fuzz,
+  minimizeFailure,
   NOTABLE_LABELS,
   Raft,
   Rng,
@@ -276,5 +278,35 @@ describe("comparing branches", () => {
     expect(after.truncateAfter).toBeNull();
     expect(after.records).toEqual([]);
     expect(after.events).toBe(before.events);
+  });
+});
+
+describe("minimized branches", () => {
+  it("open a minimized failure as a branch that fails the same way", () => {
+    const protocol = "raft-bug-no-sessions";
+    const scenario = scenarioForSeed(registry, 3, { protocol });
+    const progress: number[] = [];
+    const result = minimizeFailure(registry, scenario, (best) =>
+      progress.push(best.actions.length),
+    )!;
+    expect(result.kind).toBe("safety:client-chains");
+    expect(progress.length).toBeGreaterThan(0);
+    // Identical to what `sim fuzz` reports for this seed.
+    const fuzzed = fuzz(registry, { protocol, seeds: 1, firstSeed: 3 });
+    expect(result.minimized).toEqual(fuzzed.failures[0]!.minimized);
+
+    const host = new SimulationHost(registry, scenario);
+    const ui = viewer(host);
+    host.advanceTo(2000);
+    const main = host.branch;
+    host.addBranch("minimized", result.minimized);
+    expect(host.now).toBe(2000);
+    host.advanceTo(scenario.durationMs);
+    expectMatchesReplay(host, ui);
+    expect(ui.violations[0]?.invariant).toBe("client-chains");
+    expect(host.scenario()).toEqual({ ...result.minimized, durationMs: scenario.durationMs });
+    host.switchBranch(main);
+    expectMatchesReplay(host, ui);
+    expect(() => host.addBranch("other seed", { ...scenario, seed: 99 })).toThrow(/seed/);
   });
 });

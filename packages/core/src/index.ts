@@ -53,7 +53,7 @@ export {
   type Scenario,
 } from "./harness/scenario.ts";
 export { generateScenario, type GenerateOptions, type Workload } from "./harness/generate.ts";
-export { minimizeScenario } from "./harness/minimize.ts";
+export { minimizeFailure, minimizeScenario } from "./harness/minimize.ts";
 export {
   fuzz,
   scenarioForSeed,

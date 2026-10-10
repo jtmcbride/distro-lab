@@ -93,7 +93,7 @@ export class LinkNetwork implements Network<NetworkChange> {
   private links = new Map<string, LinkConfig>();
   /** Directed links currently cut by a partition or isolation. */
   private blocked = new Set<string>();
-  private readonly initial: ReadonlyMap<string, LinkConfig>;
+  private initial: ReadonlyMap<string, LinkConfig>;
 
   constructor(nodes: readonly NodeId[], config: LinkNetworkConfig = {}) {
     this.nodes = [...nodes];
@@ -146,14 +146,21 @@ export class LinkNetwork implements Network<NetworkChange> {
     return { links };
   }
 
-  saveState(): { links: Map<string, LinkConfig>; blocked: Set<string> } {
-    return { links: this.links, blocked: this.blocked };
+  saveState(): {
+    links: Map<string, LinkConfig>;
+    blocked: Set<string>;
+    initial: ReadonlyMap<string, LinkConfig>;
+  } {
+    // `initial` is included so a checkpoint from a differently configured network (e.g. a
+    // minimized scenario) restores completely.
+    return { links: this.links, blocked: this.blocked, initial: this.initial };
   }
 
   loadState(state: unknown): void {
     const s = state as ReturnType<LinkNetwork["saveState"]>;
     this.links = s.links;
     this.blocked = s.blocked;
+    this.initial = s.initial;
   }
 
   apply(change: NetworkChange): void {

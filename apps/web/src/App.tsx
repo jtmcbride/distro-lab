@@ -8,6 +8,7 @@ import { Tools } from "./components/Tools.tsx";
 import { PlaybackBar } from "./components/PlaybackBar.tsx";
 import { BranchBar } from "./components/BranchBar.tsx";
 import { ComparePanel } from "./components/ComparePanel.tsx";
+import { Minimize } from "./components/Minimize.tsx";
 import { ScenarioMenu } from "./components/ScenarioMenu.tsx";
 import { Violations } from "./components/Violations.tsx";
 import { useSim } from "./state/store.ts";
@@ -24,6 +25,7 @@ export function App() {
       <BranchBar />
       <ComparePanel />
       <Violations />
+      <Minimize />
       {error !== null && <p className="error">Simulation error: {error}</p>}
       <main className="workspace">
         <section className="panel cluster" aria-label="Cluster">

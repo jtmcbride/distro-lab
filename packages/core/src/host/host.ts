@@ -119,6 +119,8 @@ export interface Comparison {
 interface Timeline {
   readonly id: number;
   name: string;
+  /** Seed, processes, network and config (its `actions` are superseded by `actions`). */
+  readonly scenario: Scenario;
   readonly parent: number | null;
   readonly forkT: number;
   readonly forkRecord: number;
@@ -145,7 +147,6 @@ interface Timeline {
 export class SimulationHost {
   private readonly registry: ReadonlyMap<string, ProtocolEntry>;
   private readonly policy: CheckpointPolicy;
-  private base!: Scenario;
   private sim!: RunnableSimulation;
   private monitor!: InvariantMonitor<unknown>;
   private timelines = new Map<number, Timeline>();
@@ -181,9 +182,9 @@ export class SimulationHost {
 
   /** Replaces the simulation (and all branches); the next frame resets the UI. */
   load(scenario: Scenario): void {
-    this.base = scenario;
     this.timelines = new Map();
     this.tl = this.newTimeline({
+      scenario,
       name: "main",
       parent: null,
       forkT: 0,
@@ -230,6 +231,7 @@ export class SimulationHost {
     const parent = this.tl;
     const checkpoints = new Map([...parent.checkpoints].filter(([events]) => events <= at));
     this.tl = this.newTimeline({
+      scenario: parent.scenario,
       name: name ?? `branch ${this.nextTimeline}`,
       parent: parent.id,
       forkT: this.sim.now,
@@ -240,6 +242,44 @@ export class SimulationHost {
       spacing: parent.spacing,
     });
     return this.tl.id;
+  }
+
+  /**
+   * Adds a branch running a variant of the scenario from the start, e.g. a minimized one.
+   * It may change actions, network settings and duration, but not the seed, processes or
+   * protocol config. Switches to it at the current time.
+   */
+  addBranch(name: string, scenario: Scenario): number {
+    const base = this.tl.scenario;
+    const same = (s: Scenario) =>
+      canonicalJson({
+        protocol: s.protocol,
+        seed: s.seed,
+        nodes: s.nodes as never,
+        clients: (s.clients ?? []) as never,
+        config: s.config ?? null,
+      });
+    if (same(scenario) !== same(base)) {
+      throw new Error("a branch must keep the protocol, seed, processes and config");
+    }
+    const trace: TraceRecord[] = [];
+    const { sim, monitor } = this.registry
+      .get(scenario.protocol)!
+      .build(scenario, { sinks: [(r) => trace.push(r)] });
+    const parent = this.tl.id;
+    const timeline = this.newTimeline({
+      scenario,
+      name,
+      parent,
+      forkT: 0,
+      forkRecord: -1,
+      actions: scenario.actions.map((a) => JSON.parse(canonicalJson(a)) as ScenarioAction),
+      trace,
+      checkpoints: new Map([[0, saveCheckpoint(sim, monitor)]]),
+      spacing: this.policy.every,
+    });
+    this.switchBranch(timeline.id);
+    return timeline.id;
   }
 
   renameBranch(id: number, name: string): void {
@@ -372,8 +412,8 @@ export class SimulationHost {
     if (best === undefined) throw new Error("no checkpoint at the start of the run");
     const start = best.recordId;
     const trace = timeline.trace.slice(0, start + 1);
-    const { sim, monitor } = this.registry.get(this.base.protocol)!.build(
-      { ...this.base, actions: timeline.actions },
+    const { sim, monitor } = this.registry.get(timeline.scenario.protocol)!.build(
+      { ...timeline.scenario, actions: timeline.actions },
       {
         sinks: [
           (r) => {
@@ -420,9 +460,9 @@ export class SimulationHost {
   /** The scenario as it stands, including live actions; replays to the same trace. */
   scenario(): Scenario {
     return {
-      ...this.base,
+      ...this.tl.scenario,
       actions: [...this.tl.actions],
-      durationMs: Math.max(this.base.durationMs, Math.ceil(this.sim.now)),
+      durationMs: Math.max(this.tl.scenario.durationMs, Math.ceil(this.sim.now)),
     };
   }
 
@@ -520,6 +560,17 @@ export class SimulationHost {
     );
     this.sim.runUntil(target);
     this.jumpPending = true;
+  }
+
+  /**
+   * Runs the scenario to its end and, if a safety violation occurs, goes to just after the
+   * step that caused the first one. Returns that violation.
+   */
+  seekToFirstViolation(): Violation | undefined {
+    this.seek(this.tl.scenario.durationMs);
+    const first = this.monitor.violations[0];
+    if (first !== undefined) this.seekRecord(first.recordId);
+    return first;
   }
 
   /** Jumps to just after the step that emitted record `id`. */

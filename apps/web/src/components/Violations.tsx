@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { Violation } from "@distro-lab/core";
 import { sim } from "../sim/client.ts";
+import { startMinimize } from "../sim/minimize.ts";
 import { useSim } from "../state/store.ts";
 import { formatMs } from "./PlaybackBar.tsx";
 
@@ -13,6 +14,7 @@ export function jumpTo(v: Violation): void {
 /** Banner listing safety violations found so far, with jump-to. */
 export function Violations() {
   const violations = useSim((s) => s.violations);
+  const minimizing = useSim((s) => s.minimizing !== null);
   const [open, setOpen] = useState(false);
   if (violations.length === 0) return null;
   const first = violations[0]!;
@@ -26,6 +28,14 @@ export function Violations() {
       </span>
       <button type="button" onClick={() => jumpTo(first)}>
         Jump to first
+      </button>
+      <button
+        type="button"
+        disabled={minimizing}
+        onClick={() => void startMinimize()}
+        title="Find the fewest faults that still cause this violation (runs in the background)"
+      >
+        Minimize
       </button>
       {violations.length > 1 && (
         <button type="button" onClick={() => setOpen((o) => !o)}>
