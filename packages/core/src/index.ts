@@ -28,11 +28,14 @@ export {
   type RunnableSimulation,
   type ScheduledAction,
   type SimulationOptions,
+  type SimulationState,
 } from "./simulation.ts";
+export { loadCheckpoint, saveCheckpoint, type Checkpoint } from "./snapshot.ts";
 export {
   InvariantMonitor,
   type ClusterSnapshot,
   type Invariant,
+  type MonitorState,
   type NodeSnapshot,
   type Observable,
   type Report,

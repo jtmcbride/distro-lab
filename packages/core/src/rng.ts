@@ -86,6 +86,14 @@ export class Rng {
     return { a: this.a, b: this.b, c: this.c, d: this.d };
   }
 
+  /** Continues from `state` (from getState); streams still derive from the original seed. */
+  setState(state: RngState): void {
+    this.a = state.a;
+    this.b = state.b;
+    this.c = state.c;
+    this.d = state.d;
+  }
+
   nextUint32(): number {
     const t = (((this.a + this.b) | 0) + this.d) | 0;
     this.d = (this.d + 1) | 0;

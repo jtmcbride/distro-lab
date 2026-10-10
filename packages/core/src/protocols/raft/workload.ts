@@ -57,10 +57,14 @@ export const raftKvWorkload: Workload = (rng, clients, fromMs, toMs) => {
  *   and reads go through the log, so any other value is a stale or wrong read).
  */
 export function clientChains(): Invariant<RaftView> {
-  const ops = new Map<string, KvOp>();
-  const lastWritten = new Map<NodeId, string | null>();
+  let ops = new Map<string, KvOp>();
+  let lastWritten = new Map<NodeId, string | null>();
   return {
     name: "client-chains",
+    save: () => ({ ops, lastWritten }),
+    load: (state) => {
+      ({ ops, lastWritten } = state as { ops: typeof ops; lastWritten: typeof lastWritten });
+    },
     check() {},
     onRecord(r, _now, report) {
       if (r.type !== "annotate") return;

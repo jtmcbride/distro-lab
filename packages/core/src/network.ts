@@ -21,6 +21,12 @@ export interface Network<Change = never> {
   apply(change: Change): void;
   /** Optional plain-data description of the current network, for visualizations. */
   view?(): CanonicalValue;
+  /**
+   * Mutable state for snapshots, as structured-clonable data (live references; the caller
+   * copies). Networks whose behavior never changes after construction can omit both.
+   */
+  saveState?(): unknown;
+  loadState?(state: unknown): void;
 }
 
 /** Lossless network with a fixed delay. Useful for tests and as a baseline. */

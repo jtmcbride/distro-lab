@@ -90,9 +90,9 @@ function validate(link: LinkConfig, where: string): LinkConfig {
  */
 export class LinkNetwork implements Network<NetworkChange> {
   private readonly nodes: readonly NodeId[];
-  private readonly links = new Map<string, LinkConfig>();
+  private links = new Map<string, LinkConfig>();
   /** Directed links currently cut by a partition or isolation. */
-  private readonly blocked = new Set<string>();
+  private blocked = new Set<string>();
   private readonly initial: ReadonlyMap<string, LinkConfig>;
 
   constructor(nodes: readonly NodeId[], config: LinkNetworkConfig = {}) {
@@ -144,6 +144,16 @@ export class LinkNetwork implements Network<NetworkChange> {
       links.push({ from, to, ...l, connected: l.up && !this.blocked.has(k) });
     }
     return { links };
+  }
+
+  saveState(): { links: Map<string, LinkConfig>; blocked: Set<string> } {
+    return { links: this.links, blocked: this.blocked };
+  }
+
+  loadState(state: unknown): void {
+    const s = state as ReturnType<LinkNetwork["saveState"]>;
+    this.links = s.links;
+    this.blocked = s.blocked;
   }
 
   apply(change: NetworkChange): void {
