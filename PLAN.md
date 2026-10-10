@@ -220,10 +220,31 @@ write}`, where the dot is the coordinator plus a fresh value of its persistent c
 | 8   | CRDT values: grow-only counters and observed-remove sets merged by join; client increment/add/remove; checks for counter bounds and acknowledged adds     | Planted double-counting and remove-everything bugs are caught                                         | done   |
 | 9   | Performance and tooling: incremental checks, `formatView`, `sim run --state`                                                                              | ≥ 40k events/s; step 6 failures are understandable from the CLI                                       | done   |
 | 10  | UI: per-protocol UI modules; replica grid (keys × servers, siblings, clocks, hints), inspector, client form, ring placement, examples in the menu         | Siblings visibly appear and resolve in the concurrent-writes example                                  | done   |
-| 11  | Hardening: e2e, docs, results                                                                                                                             | CI green                                                                                              |        |
+| 11  | Hardening: e2e, docs, results                                                                                                                             | CI green                                                                                              | done   |
 
 Out of scope: dynamic membership and ring rebalancing, deletes, Merkle trees, clock pruning,
 coordinator forwarding.
+
+**Phase 5 result:** 10,000 generated scenarios with registers, counters and sets under random
+N/R/W, sloppy or strict quorums (8.1M events, 74k events/s) with zero safety or liveness
+failures. All nine planted bugs are caught by fuzzing within 25 seeds (first failing seeds
+0–24) and minimized. Checkpoints round-trip for Dynamo as for Raft. The examples show siblings
+appearing and resolving, and a sloppy quorum acknowledging a write that a later read misses,
+where a strict quorum is unavailable instead.
+
+Findings:
+
+- **The first fuzz run found a design bug.** Contexts kept as version vectors claim more than
+  the writer saw: having read a coordinator's write 12 is not having read its concurrent write
+  11, so a put silently replaced two acknowledged writes. Dotted versions alone do not fix
+  this; the context must be an exact dot set. That behavior is now a planted bug.
+- **Liveness, not safety, needed tuning.** Random anti-entropy partners left pairs unsynced for
+  seconds, coordinators gave up after one lost message, and long client timeouts let backlogs
+  outlast the fault-free tail. Partners are now taken in turn, coordinators ask twice, and
+  Dynamo asks for a 12s tail (every operation is a quorum round trip).
+- **Retries cause sibling explosion.** A put retried through another coordinator is a new
+  version, so a lossy, strict, W=3 run left 32 copies of two values as siblings. This is
+  Dynamo's real behavior and is left visible.
 
 ## Later phases
 

@@ -24,13 +24,14 @@ pnpm -C packages/core exec vitest run test/harness.test.ts -t "double-vote"
 pnpm -C apps/web dev
 pnpm -C apps/web e2e       # Playwright: builds with the Pages base path and serves the bundle
 pnpm -C apps/web exec playwright install chromium   # once, before the first e2e run
+CHROMIUM_PATH=/path/to/chrome-headless-shell pnpm -C apps/web e2e   # use an already-installed Chromium
 
 # CLI (runs .ts directly on Node 22 via type stripping; no build step)
 pnpm sim list
-pnpm sim fuzz --seeds 1000 [--protocol raft-bug-<name>] [--out failures]
+pnpm sim fuzz --seeds 1000 [--protocol raft|dynamo|<name>-bug-<bug>] [--out failures]
 pnpm sim run scenario.json [--trace | --tail N] [--state]
 pnpm sim gen --seed 42
-pnpm sim example figure8
+pnpm sim example figure8                          # or sloppy-quorum --protocol dynamo
 ```
 
 Nothing is built for Node: `@distro-lab/core` exports `./src/index.ts` directly. Imports use
@@ -69,13 +70,15 @@ Bottom up:
   records mid-step (client-visible events). A checker that keeps history must implement
   `save`/`load` so checkpoints can restore it.
 - **Clients** (`clients/requestClient.ts`): clients are simulated processes on the network.
-  One request outstanding, redirects, retries on timeout, durable seq; `invoke`/`complete`
-  annotations form the client-visible history.
+  One request outstanding, redirects, retries on timeout or `unavailable`, durable seq;
+  `invoke`/`complete` annotations form the client-visible history. Optional hooks rewrite an
+  op as it starts and learn from results (Dynamo attaches read contexts this way).
 - **Harness** (`harness/`): a `Scenario` is plain JSON and always replays to the same trace hash.
   `generate.ts` turns a seed into faults plus a workload, `fuzz.ts` runs seeds, `minimize.ts`
   shrinks failures. `defineProtocol` builds a `ProtocolEntry` (factory, client protocol,
-  invariants, liveness, workload, random config, examples, view formatter); `registry.ts` maps
-  names to entries and is what the CLI, host and web app use.
+  invariants and liveness, both given the scenario's protocol config, workload, random config,
+  examples, view formatter, optional longer `stabilizeMs`); `registry.ts` maps names to
+  entries and is what the CLI, host and web app use.
 - **Time travel** (`snapshot.ts`, `host/host.ts`): a checkpoint is the simulation's and the
   monitor's state copied by one `structuredClone` (invariant history can point at objects in
   protocol state). `SimulationHost` drives a run for the UI: playback, steps both ways, seek
@@ -89,13 +92,23 @@ Bottom up:
   current-term commit, KV apply with a session table), `invariants.ts`, `workload.ts` (KV client
   ops and the `client-chains` check), `scenarios.ts` (scripted Figure 8), `registry.ts` (`raft`
   plus a `raft-bug-<name>` entry per planted bug).
+- **Dynamo** (`protocols/dynamo/`): leaderless store. `ring.ts` (preference lists from server
+  ids, not the seed), `clock.ts` (dotted versions with exact causal contexts: a version vector
+  plus individual dots; plain vector clocks or vector contexts are wrong here and kept only as
+  planted bugs), `crdt.ts` (`count:` keys are grow-only counters, `set:` keys observed-remove
+  sets; other keys are sibling registers), `dynamo.ts` (any server coordinates; N/R/W, sloppy
+  or strict quorums, hinted handoff, read repair, round-robin anti-entropy; `dynamoClient`),
+  `invariants.ts` (read-sees-acknowledged-write is checked only when `promisesReadYourWrites`),
+  `scenarios.ts` (examples), `registry.ts` (liveness = replicas converge, hints drain). Stored
+  slots are replaced, never mutated: invariants detect change and the digest cache works by
+  object identity.
 
-**Planted bugs** (`protocols/raft/bugs.ts`, plus `PlantedRaftBugs` flags in `raft.ts`) are
+**Planted bugs** (`protocols/*/bugs.ts`, plus `Planted*Bugs` flags in the protocol) are
 intentionally broken variants that prove the checkers work. Don't "fix" them.
-`test/harness.test.ts` pins the first seed at which `sim fuzz` catches each bug (`CAUGHT_AT`);
-changing the generator, the RNG draw order or protocol timing usually shifts them. Re-measure
-with `pnpm sim fuzz --protocol <name>` and update the table. `commit-old-terms` is caught only
-by the scripted Figure 8 test.
+`test/harness.test.ts` and `test/dynamoHarness.test.ts` pin the first seed at which `sim fuzz`
+catches each bug (`CAUGHT_AT`); changing the generator, a workload, the RNG draw order or
+protocol timing usually shifts them. Re-measure with `pnpm sim fuzz --protocol <name>` and
+update the table. Raft's `commit-old-terms` is caught only by the scripted Figure 8 test.
 
 ### `packages/cli`
 
@@ -112,9 +125,11 @@ behavior lives in core.
 - `state/store.ts` (Zustand) applies frames; the full trace lives outside the store in
   `state/trace.ts` (`traceVersion` signals changes). `state/causes.ts`, `cone.ts`,
   `traceIndex.ts` and `inflight.ts` derive causal chains and in-flight messages from it.
-- Protocol-specific presentation is concentrated in `protocolUi.ts` (message colors, server
-  badges, election timer), `scenarios.ts` (scenario menu), and Raft views in
-  `components/Inspector.tsx`, `LogGrid.tsx` and the client op form in `Tools.tsx`.
+- Protocol-specific presentation lives behind the `ProtocolUi` interface in `src/protocols/`
+  (`raft.tsx`, `dynamo.tsx`; `uiFor` picks one by protocol-name prefix): badges, message
+  colors, timer ring and buttons, server inspector, data panel (`LogGrid` / `ReplicaGrid`),
+  client form, op descriptions. Components get it from `useProtocolUi()`. A new protocol needs
+  one of these plus entries in `scenarios.ts` (scenario menu).
 - Unit tests are `src/**/*.test.ts` (vitest); Playwright specs are in `e2e/`.
 
 ## Conventions

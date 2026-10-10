@@ -57,9 +57,12 @@ meaningful relative to them, so changes here are breaking changes.
 - `partition` groups should list clients explicitly; unlisted processes (clients included)
   form one extra group together.
 - The standard `requestClient` keeps one request outstanding, follows leader redirects,
-  retries on timeout against another server, and persists its request counter so a restart
-  never reuses a `(clientId, seq)`. Its `invoke` / `complete` annotations form the
-  client-visible history; an `invoke` with no `complete` has an unknown outcome.
+  retries on timeout against another server, backs off and tries another server when one
+  replies `unavailable`, and persists its request counter so a restart never reuses a
+  `(clientId, seq)`. Its `invoke` / `complete` annotations form the client-visible history;
+  an `invoke` with no `complete` has an unknown outcome. A protocol may give it hooks that
+  rewrite an operation as it starts (recorded in the `invoke`) and learn from its result,
+  using volatile client memory; Dynamo's client uses them to send what it last read.
 
 ## Network
 
