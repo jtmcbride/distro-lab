@@ -169,9 +169,59 @@ crashed node does not vote or store an entry), so the explanation also follows d
 messages back to the crash or link cut that dropped them. And `acknowledged-writes-replicated`
 now reports every server, since its claim ("only 2 of 5 store it") reads every log.
 
+## Phase 5 — Eventual consistency (Dynamo-style)
+
+Goal: a leaderless, Dynamo-style replicated store (consistent hashing, N/R/W quorums,
+vector-clock versions with siblings, sloppy quorums, hinted handoff, read repair,
+anti-entropy) whose checkers state precisely which guarantees each configuration keeps, then
+CRDT values whose siblings merge automatically.
+
+Design decisions:
+
+- **Any server coordinates.** The server a client contacts runs the request against the key's
+  preference list (no forwarding to the list's first node). Clients are the same
+  `requestClient`, which also learns an `unavailable` reply.
+- **Placement is a pure function of the key and the server set**: a consistent-hash ring with
+  a few tokens per server, hashed from server ids (not the seed). The first N distinct servers
+  clockwise are the key's replicas; the rest, in order, are its fallbacks.
+- **Versions are `{value, clock, write}`**, where `write` is the client's `(clientId, seq)`. A
+  coordinator stamps a new version with the merged context plus its own entry set from a
+  persistent per-server counter, so two writes never share a clock even with the same
+  context. (`context[coordinator] + 1`, the naive rule, is a planted bug.) Replicas keep
+  every version no other version dominates; equal clocks are the same write.
+- **No failure detector.** Coordinators send to the first N, and on timeout either fall back
+  to the next servers on the ring with a hint (sloppy quorum) or reply `unavailable` (strict).
+  Hints are stored durably, apart from data, and handed off when the intended owner answers.
+- **Anti-entropy by flat per-key digests**, pairwise with a random peer on a timer. Merkle
+  trees would only matter at sizes the simulator does not reach.
+- **Guarantees are checked per configuration.** Safety that always holds (no acknowledged
+  write lost, clocks identify one write, siblings are concurrent, replicas never regress,
+  reads return only written values) is checked after every event. Read-sees-acknowledged-write
+  is checked only for strict quorums with R + W > N, which promise it; sloppy quorums do not,
+  and a scripted example shows why. Liveness: after heal, every key's replicas converge,
+  hints drain, and all client operations complete.
+- **Retries are not deduplicated.** A retried put through another coordinator can become a
+  sibling of itself (same value, different clock), as in Dynamo. No deletes (tombstones).
+
+| #   | Work                                                                                                                                                        | Exit criterion                                                                                        | Status |
+| --- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- | ------ |
+| 1   | Vector clocks and version sets (compare, merge, sibling rules); consistent-hash ring and preference lists                                                   | Property tests: merge is a join (commutative, associative, idempotent), drops only dominated versions | done   |
+| 2   | Dynamo core: coordinator get/put with N/R/W, strict quorums, persistent clock counter, replica store, `unavailable`; client fills contexts from its reads   | Concurrent puts make siblings; a put with a read's context replaces them                              |        |
+| 3   | Sloppy quorum and hinted handoff, read repair, anti-entropy                                                                                                 | After a partition heals all replicas converge and hints drain; unit test per mechanism                |        |
+| 4   | Invariants: acknowledged writes durable, unique clocks, siblings concurrent, replicas monotonic, reads return written values, reads see acknowledged writes | Each fires on a hand-built violating history                                                          |        |
+| 5   | Registry entry, workload, random config (N, R, W, sloppy), convergence liveness                                                                             | 10k seeds clean                                                                                       |        |
+| 6   | Planted bugs: reused clock counter, volatile counter, last-writer-wins, dominance by sum, early ack, overwriting read repair                                | Each caught by the fuzzer and minimized                                                               |        |
+| 7   | Scripted examples: concurrent writes make siblings; sloppy quorum stale read vs strict quorum unavailability                                                | Tests assert each outcome                                                                             |        |
+| 8   | CRDT values: PN-counters and OR-sets merged by join; client increment/add/remove; checks for counter bounds and acknowledged adds                           | Planted double-counting merge is caught                                                               |        |
+| 9   | Performance and tooling: incremental checks, `formatView`, `sim run --state`                                                                                | ≥ 40k events/s; step 6 failures are understandable from the CLI                                       |        |
+| 10  | UI: per-protocol UI modules; replica grid (keys × servers, siblings, clocks, hints), inspector, client form, ring placement, examples in the menu           | Siblings visibly appear and resolve in the concurrent-writes example                                  |        |
+| 11  | Hardening: e2e, docs, results                                                                                                                               | CI green                                                                                              |        |
+
+Out of scope: dynamic membership and ring rebalancing, deletes, Merkle trees, clock pruning,
+coordinator forwarding.
+
 ## Later phases
 
-5. Eventual-consistency protocol (Dynamo-style), then vector clocks/CRDTs.
 6. Linearizability checking (Porcupine-style) for the KV store; docs, tutorials, GitHub Pages.
 
 Explicitly excluded from the first release: dynamic membership, snapshots/compaction,
