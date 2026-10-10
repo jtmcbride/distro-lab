@@ -138,3 +138,106 @@ describe("time travel", () => {
     expectMatchesReplay(host, ui);
   });
 });
+
+describe("branches", () => {
+  const withFaults = (seed: number) => scenarioForSeed(registry, seed, { protocol: "raft" });
+
+  it("share history up to the fork and then follow their own actions", () => {
+    const scenario = withFaults(12);
+    const host = new SimulationHost(registry, scenario, { every: 50, max: 20 });
+    const ui = viewer(host);
+    host.advanceTo(scenario.durationMs / 3);
+    ui.pull();
+    const shared = ui.records.slice();
+    const main = host.branch;
+    const forkT = host.now;
+    const branch = host.fork("no faults");
+    // Remove every fault that has not happened yet.
+    const kept = host
+      .scenario()
+      .actions.filter((a) => a.atMs <= forkT || a.action.type === "client");
+    host.editActions(kept);
+    host.advanceTo(scenario.durationMs);
+    expectMatchesReplay(host, ui);
+    expect(canonicalJson(ui.records.slice(0, shared.length) as never)).toBe(
+      canonicalJson(shared as never),
+    );
+    // A fresh replay of the branch's scenario shares the parent's prefix too.
+    const replay = fresh(host.scenario(), 0);
+    replay.sim.runUntil(forkT);
+    expect(canonicalJson(replay.records.slice(0, shared.length) as never)).toBe(
+      canonicalJson(shared as never),
+    );
+
+    // Switching keeps the time and truncates only past the shared records.
+    host.switchBranch(main);
+    const f = ui.pull();
+    expect(host.now).toBe(scenario.durationMs);
+    expect(f.truncateAfter).toBeGreaterThanOrEqual(shared.length - 1);
+    expectMatchesReplay(host, ui);
+    host.switchBranch(branch);
+    expectMatchesReplay(host, ui);
+    expect(host.branches().map((b) => [b.id, b.parent, b.name])).toEqual([
+      [main, null, "main"],
+      [branch, main, "no faults"],
+    ]);
+  });
+
+  it("refuse edits to the past", () => {
+    const scenario = withFaults(13);
+    const host = new SimulationHost(registry, scenario);
+    const firstFault = scenario.actions.find((a) => a.action.type !== "client")!;
+    host.advanceTo(firstFault.atMs + 1);
+    const actions = host.scenario().actions;
+    const without = actions.filter(
+      (a) => canonicalJson(a as never) !== canonicalJson(firstFault as never),
+    );
+    expect(without.length).toBe(actions.length - 1);
+    expect(() => host.editActions(without)).toThrow(/already processed/);
+    expect(() =>
+      host.editActions([...actions, { atMs: host.now - 1, action: { type: "crash", node: "A" } }]),
+    ).toThrow(/after now/);
+    expect(host.scenario().actions).toEqual(actions);
+  });
+
+  it("random forks, edits, switches and seeks always match a fresh replay", () => {
+    const seeds = Number(process.env["TIME_TRAVEL_SEEDS"] ?? 3);
+    for (let seed = 1; seed <= seeds; seed++) {
+      const rng = Rng.fromSeed(1000 + seed);
+      const scenario = withFaults(seed);
+      const host = new SimulationHost(registry, scenario, { every: 40, max: 6 });
+      const ui = viewer(host);
+      for (let op = 0; op < 40; op++) {
+        const kind = rng.int(0, 7);
+        if (kind === 0) host.advanceTo(host.now + rng.int(1, 3000));
+        else if (kind === 1) host.seek(rng.int(0, scenario.durationMs));
+        else if (kind === 2) host.fork();
+        else if (kind === 3) host.switchBranch(rng.pick(host.branches()).id);
+        else if (kind === 4) host.stepBack();
+        else if (kind === 5) {
+          // Drop one pending action, or add a crash or recovery soon.
+          const actions = host.scenario().actions.slice();
+          const pending = actions.filter((a) => a.atMs > host.now);
+          if (pending.length > 0 && rng.chance(0.5)) {
+            actions.splice(actions.indexOf(rng.pick(pending)), 1);
+          } else {
+            actions.push({
+              atMs: host.now + rng.int(1, 500),
+              action: {
+                type: rng.chance(0.5) ? "crash" : "recover",
+                node: rng.pick(scenario.nodes),
+              },
+            });
+          }
+          host.editActions(actions);
+        } else if (kind === 6) host.stepBackToNotable();
+        else
+          host.act({
+            type: "network",
+            change: { type: "isolate", node: rng.pick(scenario.nodes) },
+          });
+        expectMatchesReplay(host, ui);
+      }
+    }
+  });
+});

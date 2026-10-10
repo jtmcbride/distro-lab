@@ -73,4 +73,11 @@ export {
   type RequestClientView,
   type RequestClientVolatile,
 } from "./clients/requestClient.ts";
-export { NOTABLE_LABELS, SimulationHost, type Frame, type ProcessState } from "./host/host.ts";
+export {
+  NOTABLE_LABELS,
+  SimulationHost,
+  type BranchInfo,
+  type CheckpointPolicy,
+  type Frame,
+  type ProcessState,
+} from "./host/host.ts";

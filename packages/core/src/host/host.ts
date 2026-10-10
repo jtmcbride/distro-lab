@@ -69,6 +69,36 @@ export interface CheckpointPolicy {
 
 const DEFAULT_CHECKPOINTS: CheckpointPolicy = { every: 500, max: 128 };
 
+/** A branch of the session: a scenario variant sharing history with its parent. */
+export interface BranchInfo {
+  readonly id: number;
+  readonly name: string;
+  /** Branch it was forked from (null for the original). */
+  readonly parent: number | null;
+  /** Where it was forked: virtual time and the last record shared with the parent. */
+  readonly forkT: number;
+  readonly forkRecord: number;
+  readonly actions: readonly ScenarioAction[];
+}
+
+interface Timeline {
+  readonly id: number;
+  name: string;
+  readonly parent: number | null;
+  readonly forkT: number;
+  readonly forkRecord: number;
+  /** The scenario's actions including live ones and edits, in the order they were added. */
+  actions: ScenarioAction[];
+  /**
+   * Records of this timeline by id, including any beyond the current position (after going
+   * back) until the future changes.
+   */
+  trace: TraceRecord[];
+  /** Checkpoints by event count; ones from before a fork are shared with the parent. */
+  checkpoints: Map<number, Checkpoint>;
+  spacing: number;
+}
+
 /**
  * Drives one simulation for an interactive UI: playback at a speed, single steps forwards
  * and backwards, live actions (recorded into the scenario), and seeking. Platform
@@ -81,18 +111,12 @@ export class SimulationHost {
   private readonly registry: ReadonlyMap<string, ProtocolEntry>;
   private readonly policy: CheckpointPolicy;
   private base!: Scenario;
-  /** The scenario's actions including live ones, in the order they were added. */
-  private actions: ScenarioAction[] = [];
   private sim!: RunnableSimulation;
   private monitor!: InvariantMonitor<unknown>;
-  /**
-   * Records of the current timeline by id, including any beyond the current position
-   * (after going back) until a live action changes the future.
-   */
-  private trace: TraceRecord[] = [];
-  /** Checkpoints by event count. */
-  private checkpoints = new Map<number, Checkpoint>();
-  private spacing = 0;
+  private timelines = new Map<number, Timeline>();
+  private nextTimeline = 0;
+  /** The branch being run. */
+  private tl!: Timeline;
   /** Id of the first record emitted by the most recent step. */
   private stepStart = 0;
   private lastStepEnd = -1;
@@ -118,12 +142,140 @@ export class SimulationHost {
     this.load(scenario);
   }
 
-  /** Replaces the simulation; the next frame resets the UI. */
+  /** Replaces the simulation (and all branches); the next frame resets the UI. */
   load(scenario: Scenario): void {
     this.base = scenario;
-    this.actions = scenario.actions.map((a) => JSON.parse(canonicalJson(a)) as ScenarioAction);
+    this.timelines = new Map();
+    this.tl = this.newTimeline({
+      name: "main",
+      parent: null,
+      forkT: 0,
+      forkRecord: -1,
+      actions: scenario.actions.map((a) => JSON.parse(canonicalJson(a)) as ScenarioAction),
+      trace: [],
+      checkpoints: new Map(),
+      spacing: this.policy.every,
+    });
     this.rebuild(scenario);
     this.playing = false;
+  }
+
+  private newTimeline(t: Omit<Timeline, "id">): Timeline {
+    const timeline = { id: this.nextTimeline++, ...t };
+    this.timelines.set(timeline.id, timeline);
+    return timeline;
+  }
+
+  /** All branches, oldest first. */
+  branches(): BranchInfo[] {
+    return [...this.timelines.values()].map((t) => ({
+      id: t.id,
+      name: t.name,
+      parent: t.parent,
+      forkT: t.forkT,
+      forkRecord: t.forkRecord,
+      actions: t.actions,
+    }));
+  }
+
+  /** The branch being run. */
+  get branch(): number {
+    return this.tl.id;
+  }
+
+  /**
+   * Starts a new branch at the current position, identical to the current one until its
+   * actions are edited, and switches to it.
+   */
+  fork(name?: string): number {
+    const at = this.sim.eventCount;
+    const parent = this.tl;
+    const checkpoints = new Map([...parent.checkpoints].filter(([events]) => events <= at));
+    this.tl = this.newTimeline({
+      name: name ?? `branch ${this.nextTimeline}`,
+      parent: parent.id,
+      forkT: this.sim.now,
+      forkRecord: this.sim.lastRecordId,
+      actions: [...parent.actions],
+      trace: parent.trace.slice(0, this.sim.lastRecordId + 1),
+      checkpoints,
+      spacing: parent.spacing,
+    });
+    return this.tl.id;
+  }
+
+  renameBranch(id: number, name: string): void {
+    this.timeline(id).name = name;
+  }
+
+  /** Removes a branch other than the current one (its own branches keep their history). */
+  deleteBranch(id: number): void {
+    if (id === this.tl.id) throw new Error("cannot delete the current branch");
+    this.timeline(id);
+    this.timelines.delete(id);
+  }
+
+  /**
+   * Switches to another branch at the same virtual time. The UI keeps the records both
+   * branches share.
+   */
+  switchBranch(id: number): void {
+    const target = this.timeline(id);
+    if (target === this.tl) return;
+    const from = this.tl;
+    const now = this.sim.now;
+    let shared = 0;
+    const limit = Math.min(from.trace.length, target.trace.length);
+    while (shared < limit && from.trace[shared] === target.trace[shared]) shared++;
+    this.tl = target;
+    this.travel(
+      (cp) => cp.t <= now,
+      () => true,
+    );
+    this.sim.runUntil(now);
+    this.cutSent(shared, true);
+    this.jumpPending = true;
+  }
+
+  /**
+   * Replaces the current branch's actions that have not run yet, e.g. to remove a crash
+   * or add a partition. Actions that already ran must be kept; added or changed ones must
+   * be later than now. The branch's future is recomputed.
+   */
+  editActions(actions: readonly ScenarioAction[]): void {
+    const normalized = actions.map((a) => JSON.parse(canonicalJson(a)) as ScenarioAction);
+    const before = new Map<string, number>();
+    for (const a of this.tl.actions) {
+      const k = canonicalJson(a);
+      before.set(k, (before.get(k) ?? 0) + 1);
+    }
+    for (const a of normalized) {
+      const k = canonicalJson(a);
+      const n = before.get(k) ?? 0;
+      if (n > 0) before.set(k, n - 1);
+      else if (!(a.atMs > this.sim.now)) {
+        throw new RangeError(`a new action must be after now (${this.sim.now}ms): ${k}`);
+      }
+    }
+    // Throws if an action that already ran is missing.
+    this.sim.setActions(normalized);
+    this.tl.actions = normalized;
+    this.forgetFuture();
+  }
+
+  private timeline(id: number): Timeline {
+    const t = this.timelines.get(id);
+    if (t === undefined) throw new Error(`no branch ${id}`);
+    return t;
+  }
+
+  /** Drops what was known about the current branch after the current position. */
+  private forgetFuture(): void {
+    for (const events of this.tl.checkpoints.keys()) {
+      if (events > this.sim.eventCount) this.tl.checkpoints.delete(events);
+    }
+    this.tl.trace.length = this.sim.lastRecordId + 1;
+    this.cutSent(this.tl.trace.length, true);
   }
 
   get now(): number {
@@ -135,16 +287,16 @@ export class SimulationHost {
     return this.sim.eventCount;
   }
 
-  /** Number of checkpoints held (for tests and diagnostics). */
+  /** Number of checkpoints held by the current branch (for tests and diagnostics). */
   get checkpointCount(): number {
-    return this.checkpoints.size;
+    return this.tl.checkpoints.size;
   }
 
   /** The scenario as it stands, including live actions; replays to the same trace. */
   scenario(): Scenario {
     return {
       ...this.base,
-      actions: [...this.actions],
+      actions: [...this.tl.actions],
       durationMs: Math.max(this.base.durationMs, Math.ceil(this.sim.now)),
     };
   }
@@ -212,7 +364,7 @@ export class SimulationHost {
   stepBackToNotable(): void {
     const violations = new Set(this.monitor.violations.map((v) => v.recordId));
     for (let i = this.stepStart - 1; i >= 0; i--) {
-      const r = this.trace[i]!;
+      const r = this.tl.trace[i]!;
       if (isNotable(r) || violations.has(r.id)) {
         this.seekRecord(r.id);
         return;
@@ -227,12 +379,9 @@ export class SimulationHost {
    */
   act(action: Action<CanonicalValue, CanonicalValue>): void {
     const at = Math.round((this.sim.now + LIVE_EPSILON_MS) * 1000) / 1000;
-    for (const events of this.checkpoints.keys()) {
-      if (events > this.sim.eventCount) this.checkpoints.delete(events);
-    }
-    this.trace.length = this.sim.lastRecordId + 1;
+    this.forgetFuture();
     this.sim.schedule(at, action);
-    this.actions.push(JSON.parse(canonicalJson({ atMs: at, action })) as ScenarioAction);
+    this.tl.actions.push(JSON.parse(canonicalJson({ atMs: at, action })) as ScenarioAction);
     this.sim.runUntil(at);
   }
 
@@ -273,31 +422,40 @@ export class SimulationHost {
    */
   private travel(usable: (cp: Checkpoint) => boolean, mustRewind: () => boolean): void {
     let best: Checkpoint | undefined;
-    for (const cp of this.checkpoints.values()) {
+    for (const cp of this.tl.checkpoints.values()) {
       if (usable(cp) && (best === undefined || cp.events > best.events)) best = cp;
     }
     if (best === undefined) throw new Error("no checkpoint at the start of the run");
     if (!mustRewind() && best.events <= this.sim.eventCount) return;
     loadCheckpoint(this.sim, this.monitor, best);
-    // Live actions added after the checkpoint was taken.
-    this.sim.setActions(this.actions);
+    // Live actions or edits made after the checkpoint was taken.
+    this.sim.setActions(this.tl.actions);
     this.lastStepEnd = best.recordId;
     this.stepStart = best.recordId + 1;
-    const cut =
-      this.sentRecords > best.recordId + 1 || this.sentViolations > this.monitor.violations.length;
-    if (cut) {
-      this.sentRecords = Math.min(this.sentRecords, best.recordId + 1);
-      this.sentViolations = Math.min(this.sentViolations, this.monitor.violations.length);
-      this.truncatePending = Math.min(this.truncatePending ?? Infinity, this.sentRecords - 1);
-    }
+  }
+
+  /**
+   * Notes that the UI's records from index `keep` on (and possibly its violations) are no
+   * longer valid, so the next frame truncates them.
+   */
+  private cutSent(keep: number, violationsChanged: boolean): void {
+    if (this.sentRecords <= keep && !violationsChanged) return;
+    this.sentRecords = Math.min(this.sentRecords, keep);
+    this.sentViolations = 0;
+    this.truncatePending = Math.min(this.truncatePending ?? Infinity, this.sentRecords - 1);
   }
 
   /** Everything that changed since the previous frame. */
   frame(): Frame {
     const reset = this.resetPending;
-    const truncateAfter = reset ? null : this.truncatePending;
     const end = this.sim.lastRecordId + 1;
-    const records = this.trace.slice(this.sentRecords, end);
+    // Went back in time (records of the same timeline are identical, so a seek that ends
+    // up ahead again needs no truncation).
+    if (this.sentRecords > end || this.sentViolations > this.monitor.violations.length) {
+      this.cutSent(end, true);
+    }
+    const truncateAfter = reset ? null : this.truncatePending;
+    const records = this.tl.trace.slice(this.sentRecords, end);
     this.sentRecords = end;
     const violations = this.monitor.violations.slice(
       reset || truncateAfter !== null ? 0 : this.sentViolations,
@@ -333,7 +491,6 @@ export class SimulationHost {
   private rebuild(scenario: Scenario): void {
     const entry = this.registry.get(scenario.protocol);
     if (entry === undefined) throw new Error(`unknown protocol "${scenario.protocol}"`);
-    this.trace = [];
     this.sentRecords = 0;
     this.sentViolations = 0;
     this.resetPending = true;
@@ -342,8 +499,9 @@ export class SimulationHost {
     const { sim, monitor } = entry.build(scenario, {
       sinks: [
         (r) => {
-          // A replay re-emits records of the known timeline.
-          this.trace[r.id] = r;
+          // A replay re-emits records of the known timeline; keeping the originals lets
+          // branches recognize the records they share.
+          if (r.id >= this.tl.trace.length) this.tl.trace.push(r);
           for (const w of this.watchers) w(r);
         },
       ],
@@ -352,25 +510,24 @@ export class SimulationHost {
     this.monitor = monitor;
     this.lastStepEnd = sim.lastRecordId;
     this.stepStart = 0;
-    this.checkpoints = new Map();
-    this.spacing = this.policy.every;
     this.checkpoint();
     // Registered after the monitor's listener, so checkpoints include this step's checks.
     sim.onStep(() => {
       this.stepStart = this.lastStepEnd + 1;
       this.lastStepEnd = sim.lastRecordId;
-      if (sim.eventCount % this.spacing === 0) this.checkpoint();
+      if (sim.eventCount % this.tl.spacing === 0) this.checkpoint();
     });
   }
 
   private checkpoint(): void {
+    const { checkpoints } = this.tl;
     const events = this.sim.eventCount;
-    if (this.checkpoints.has(events)) return;
-    this.checkpoints.set(events, saveCheckpoint(this.sim, this.monitor));
-    if (this.checkpoints.size <= this.policy.max) return;
-    this.spacing *= 2;
-    for (const e of this.checkpoints.keys()) {
-      if (e % this.spacing !== 0) this.checkpoints.delete(e);
+    if (checkpoints.has(events)) return;
+    checkpoints.set(events, saveCheckpoint(this.sim, this.monitor));
+    if (checkpoints.size <= this.policy.max) return;
+    this.tl.spacing *= 2;
+    for (const e of checkpoints.keys()) {
+      if (e % this.tl.spacing !== 0) checkpoints.delete(e);
     }
   }
 }
