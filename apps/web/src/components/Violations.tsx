@@ -2,6 +2,7 @@ import { useState } from "react";
 import type { Violation } from "@distro-lab/core";
 import { sim } from "../sim/client.ts";
 import { startMinimize } from "../sim/minimize.ts";
+import { explain } from "../state/cone.ts";
 import { useSim } from "../state/store.ts";
 import { formatMs } from "./PlaybackBar.tsx";
 
@@ -9,6 +10,11 @@ import { formatMs } from "./PlaybackBar.tsx";
 export function jumpTo(v: Violation): void {
   useSim.setState({ pendingSelection: { record: v.recordId, process: v.nodes[0] ?? null } });
   sim.seekRecord(v.recordId);
+}
+
+function explainViolation(v: Violation): void {
+  jumpTo(v);
+  explain(v.recordId, v.nodes, `the ${v.invariant} violation`);
 }
 
 /** Banner listing safety violations found so far, with jump-to. */
@@ -28,6 +34,13 @@ export function Violations() {
       </span>
       <button type="button" onClick={() => jumpTo(first)}>
         Jump to first
+      </button>
+      <button
+        type="button"
+        onClick={() => explainViolation(first)}
+        title="Show every event that could have led to it"
+      >
+        Explain
       </button>
       <button
         type="button"

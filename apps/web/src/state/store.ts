@@ -44,6 +44,8 @@ export interface SimState {
       }
     | { problem: string }
     | null;
+  /** Moment whose causal past is shown: right after `record`, as seen by `nodes`. */
+  readonly explain: { record: number; nodes: readonly string[]; label: string } | null;
   /** Branch shown in the comparison panel, if open. */
   readonly compareWith: number | null;
   /** Bumped whenever `trace` changes. */
@@ -74,6 +76,7 @@ export const useSim = create<SimState>(() => ({
   branch: 0,
   actions: [],
   compareWith: null,
+  explain: null,
   minimizing: null,
   minimized: null,
   traceVersion: 0,
@@ -109,7 +112,7 @@ export function applyFrame(frame: Frame): void {
       ? { compareWith: s.branch }
       : {}),
     ...(frame.branches === null ? {} : { branches: frame.branches }),
-    ...(frame.reset ? { compareWith: null } : {}),
+    ...(frame.reset ? { compareWith: null, explain: null } : {}),
     ...(frame.actions === null ? {} : { actions: frame.actions }),
     ...(frame.jumped && s.pendingSelection !== null
       ? {

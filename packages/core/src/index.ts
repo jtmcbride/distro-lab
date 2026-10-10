@@ -31,6 +31,7 @@ export {
   type SimulationState,
 } from "./simulation.ts";
 export { loadCheckpoint, saveCheckpoint, type Checkpoint } from "./snapshot.ts";
+export { causalPast, networkChangesBefore, omissionCauses, processOf } from "./causality.ts";
 export {
   InvariantMonitor,
   type ClusterSnapshot,

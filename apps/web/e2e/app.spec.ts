@@ -180,3 +180,21 @@ test("a what-if branch without a crash avoids the Figure 8 bug", async ({ page }
   await expect(page.locator(".clock")).toContainText("1,400.0 ms");
   noErrors();
 });
+
+test("explains a violation by its causal past", async ({ page }) => {
+  const noErrors = failOnErrors(page);
+  await open(page);
+  await page.selectOption(".scenario-menu select", "figure8-bug");
+  await seek(page, 700);
+  await page.locator(".violations").getByRole("button", { name: "Explain" }).click();
+  const card = page.locator(".explain");
+  await expect(card).toContainText("Causal past of the leader-completeness violation");
+  // Figure 8 needs its crashes: they are in the causal past or mattered by dropping messages.
+  await expect(card.locator("li", { hasText: "crash" })).not.toHaveCount(0);
+  await expect(page.locator(".event-row.outside")).not.toHaveCount(0);
+  await page.getByLabel("Causal past only").check();
+  await expect(page.locator(".event-row.outside")).toHaveCount(0);
+  await card.getByRole("button", { name: "Close" }).click();
+  await expect(card).toHaveCount(0);
+  noErrors();
+});

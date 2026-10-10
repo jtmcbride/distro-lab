@@ -1029,3 +1029,33 @@ pre.payload {
   max-height: 160px;
   overflow: auto;
 }
+
+.explain {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  align-items: center;
+  padding: 8px 12px;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 8%, var(--panel));
+  font-size: 0.85rem;
+}
+
+.explain-lists {
+  flex-basis: 100%;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 6px 20px;
+}
+
+.explain ul {
+  margin: 4px 0 0;
+  padding-left: 18px;
+  max-height: 140px;
+  overflow: auto;
+}
+
+.event-row.outside {
+  opacity: 0.35;
+}

@@ -429,7 +429,12 @@ function acknowledgedWritesReplicated(): Invariant<RaftView> {
       if (holders.length < majority) {
         report(
           `${r.node} got a reply for request ${seq}, but only ${holders.length} of ${s.nodes.length} servers store it`,
-          [r.node, ...holders.map((h) => h.id)],
+          // Every server's log is part of the claim, not only the holders'.
+          [
+            r.node,
+            ...holders.map((h) => h.id),
+            ...s.nodes.filter((n) => !holders.includes(n)).map((n) => n.id),
+          ],
         );
       }
     },

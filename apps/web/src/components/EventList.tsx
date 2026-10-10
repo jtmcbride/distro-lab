@@ -4,6 +4,7 @@ import { formatRecord, type TraceRecord } from "@distro-lab/core";
 import { sim } from "../sim/client.ts";
 import { useSim } from "../state/store.ts";
 import { trace, traceEpoch } from "../state/trace.ts";
+import { currentCone } from "../state/cone.ts";
 
 type Kind = "protocol" | "messages" | "timers" | "faults" | "clients";
 
@@ -65,6 +66,9 @@ export function EventList() {
   );
   const [process, setProcess] = useState("");
   const [follow, setFollow] = useState(true);
+  const [pastOnly, setPastOnly] = useState(false);
+  const explaining = useSim((s) => s.explain);
+  const cone = explaining === null ? null : currentCone();
   const parentRef = useRef<HTMLDivElement>(null);
 
   // Incrementally maintained list of matching trace indexes.
@@ -74,7 +78,7 @@ export function EventList() {
     epoch: number;
     rows: number[];
   }>({ key: "", read: 0, epoch: -1, rows: [] });
-  const key = `${[...kinds].sort().join()}|${process}`;
+  const key = `${[...kinds].sort().join()}|${process}|${pastOnly && cone !== null ? `${explaining!.record}/${explaining!.nodes.join()}` : ""}`;
   const rows = useMemo(() => {
     const f = filtered.current;
     if (f.key !== key || f.epoch !== traceEpoch.value) {
@@ -85,7 +89,13 @@ export function EventList() {
     }
     for (; f.read < trace.length; f.read++) {
       const r = trace[f.read]!;
-      if (kinds.has(kindOf(r)) && (process === "" || involves(r, process))) f.rows.push(f.read);
+      if (
+        kinds.has(kindOf(r)) &&
+        (process === "" || involves(r, process)) &&
+        (!pastOnly || cone === null || cone.past.has(r.id) || cone.omissions.has(r.id))
+      ) {
+        f.rows.push(f.read);
+      }
     }
     // The selected record is always listed, even if the filters would hide it (e.g. a
     // violation detected at a message send while messages are hidden).
@@ -154,6 +164,16 @@ export function EventList() {
           <input type="checkbox" checked={follow} onChange={(e) => setFollow(e.target.checked)} />
           Follow newest
         </label>
+        {cone !== null && (
+          <label>
+            <input
+              type="checkbox"
+              checked={pastOnly}
+              onChange={(e) => setPastOnly(e.target.checked)}
+            />
+            Causal past only
+          </label>
+        )}
         <span className="muted">
           {rows.length.toLocaleString()} of {trace.length.toLocaleString()}
         </span>
@@ -172,7 +192,11 @@ export function EventList() {
               <div
                 key={r.id}
                 role="listitem"
-                className={`event-row kind-${kindOf(r)}${r.id === selectedRecord ? " selected" : ""}`}
+                className={`event-row kind-${kindOf(r)}${r.id === selectedRecord ? " selected" : ""}${
+                  cone !== null && !cone.past.has(r.id) && !cone.omissions.has(r.id)
+                    ? " outside"
+                    : ""
+                }`}
                 style={{ transform: `translateY(${item.start}px)`, height: ROW_H }}
                 onClick={() => useSim.setState({ selectedRecord: r.id })}
                 onDoubleClick={() => sim.seekRecord(r.id)}
