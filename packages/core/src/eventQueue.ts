@@ -89,6 +89,13 @@ export class EventQueue<T> {
     this.nextSeq = nextSeq;
   }
 
+  /** Removes every entry whose item matches. */
+  removeWhere(predicate: (item: T) => boolean): void {
+    this.heap = this.heap
+      .filter((e) => !predicate(e.item))
+      .sort((x, y) => (before(x, y) ? -1 : before(y, x) ? 1 : 0));
+  }
+
   /** Rebuild from a snapshot; entries keep their original seq. */
   static fromEntries<T>(entries: readonly Queued<T>[], nextSeq: number): EventQueue<T> {
     const q = new EventQueue<T>(nextSeq);

@@ -119,3 +119,30 @@ test("fits a phone-width screen without sideways scrolling", async ({ page }) =>
   );
   expect(overflow).toBeLessThanOrEqual(0);
 });
+
+test("steps backwards through events and notable moments", async ({ page }) => {
+  const noErrors = failOnErrors(page);
+  await open(page);
+  for (let i = 0; i < 2; i++) await page.getByRole("button", { name: "Next notable" }).click();
+  await expect(page.locator(".node.role-leader")).toHaveCount(1);
+  const events = async () =>
+    Number(
+      (await page.locator(".clock .muted").textContent())!
+        .match(/([\d,]+) events/)![1]!
+        .replace(/,/g, ""),
+    );
+  const before = await events();
+  await page.getByRole("button", { name: "Step back" }).click();
+  await expect.poll(events).toBe(before - 1);
+  // Back past the election: nobody leads, and the becameLeader row is gone.
+  await page.getByRole("button", { name: "Previous notable" }).click();
+  await page.getByRole("button", { name: "Previous notable" }).click();
+  await expect(page.locator(".node.role-leader")).toHaveCount(0);
+  await expect(page.locator(".event-row", { hasText: "becameLeader" })).toHaveCount(0);
+  // Keyboard shortcuts are ignored while a button has focus.
+  await page.locator(".cluster svg").click({ position: { x: 5, y: 5 } });
+  await page.keyboard.press("Shift+ArrowRight");
+  await page.keyboard.press("Shift+ArrowRight");
+  await expect(page.locator(".node.role-leader")).toHaveCount(1);
+  noErrors();
+});

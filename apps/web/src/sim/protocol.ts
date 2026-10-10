@@ -8,7 +8,10 @@ export type ToWorker =
   | { readonly type: "speed"; readonly speed: number }
   | { readonly type: "step" }
   | { readonly type: "stepNotable" }
+  | { readonly type: "stepBack" }
+  | { readonly type: "stepBackNotable" }
   | { readonly type: "seek"; readonly timeMs: number }
+  | { readonly type: "seekRecord"; readonly id: number }
   | { readonly type: "act"; readonly action: Action<CanonicalValue, CanonicalValue> }
   | { readonly type: "export"; readonly requestId: number };
 

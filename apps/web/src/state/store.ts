@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import type { CanonicalValue, Frame, ProcessState, Violation } from "@distro-lab/core";
-import { trace } from "./trace.ts";
+import { trace, traceEpoch } from "./trace.ts";
 
 export interface SimState {
   readonly loaded: boolean;
@@ -54,7 +54,10 @@ export const useSim = create<SimState>(() => ({
 
 /** Folds a worker frame into the store and the shared trace. */
 export function applyFrame(frame: Frame): void {
+  const rewound = frame.reset || frame.truncateAfter !== null;
   if (frame.reset) trace.length = 0;
+  else if (frame.truncateAfter !== null) trace.length = frame.truncateAfter + 1;
+  if (rewound) traceEpoch.value++;
   for (const r of frame.records) trace.push(r);
   useSim.setState((s) => ({
     loaded: true,
@@ -66,17 +69,17 @@ export function applyFrame(frame: Frame): void {
     idle: frame.idle,
     processes: frame.processes,
     network: frame.network,
-    violations: frame.reset ? frame.violations : [...s.violations, ...frame.violations],
-    traceVersion: frame.reset || frame.records.length > 0 ? s.traceVersion + 1 : s.traceVersion,
+    violations: rewound ? frame.violations : [...s.violations, ...frame.violations],
+    traceVersion: rewound || frame.records.length > 0 ? s.traceVersion + 1 : s.traceVersion,
     error: null,
-    ...(frame.reset
-      ? s.pendingSelection === null
+    ...(frame.jumped && s.pendingSelection !== null
+      ? {
+          selectedRecord: s.pendingSelection.record,
+          selectedProcess: s.pendingSelection.process,
+          pendingSelection: null,
+        }
+      : frame.reset || (s.selectedRecord !== null && s.selectedRecord >= trace.length)
         ? { selectedRecord: null }
-        : {
-            selectedRecord: s.pendingSelection.record,
-            selectedProcess: s.pendingSelection.process,
-            pendingSelection: null,
-          }
-      : {}),
+        : {}),
   }));
 }

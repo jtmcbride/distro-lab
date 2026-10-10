@@ -1,5 +1,5 @@
 import type { CanonicalValue, TraceRecord } from "@distro-lab/core";
-import { trace } from "./trace.ts";
+import { trace, traceEpoch } from "./trace.ts";
 
 export interface InFlight {
   readonly key: string;
@@ -37,12 +37,12 @@ interface Pending {
  */
 class InFlightTracker {
   private read = 0;
-  private firstId: number | undefined;
+  private epoch = -1;
   private readonly pending = new Map<number, Pending>();
   private drops: Drop[] = [];
 
   update(): void {
-    if (trace.length < this.read || trace[0]?.id !== this.firstId) this.reset();
+    if (traceEpoch.value !== this.epoch) this.reset();
     for (; this.read < trace.length; this.read++) this.apply(trace[this.read]!);
   }
 
@@ -75,7 +75,7 @@ class InFlightTracker {
 
   private reset(): void {
     this.read = 0;
-    this.firstId = trace[0]?.id;
+    this.epoch = traceEpoch.value;
     this.pending.clear();
     this.drops = [];
   }

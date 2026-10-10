@@ -3,7 +3,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { formatRecord, type TraceRecord } from "@distro-lab/core";
 import { sim } from "../sim/client.ts";
 import { useSim } from "../state/store.ts";
-import { trace } from "../state/trace.ts";
+import { trace, traceEpoch } from "../state/trace.ts";
 
 type Kind = "protocol" | "messages" | "timers" | "faults" | "clients";
 
@@ -71,16 +71,16 @@ export function EventList() {
   const filtered = useRef<{
     key: string;
     read: number;
-    firstId: number | undefined;
+    epoch: number;
     rows: number[];
-  }>({ key: "", read: 0, firstId: undefined, rows: [] });
+  }>({ key: "", read: 0, epoch: -1, rows: [] });
   const key = `${[...kinds].sort().join()}|${process}`;
   const rows = useMemo(() => {
     const f = filtered.current;
-    if (f.key !== key || trace.length < f.read || trace[0]?.id !== f.firstId) {
+    if (f.key !== key || f.epoch !== traceEpoch.value) {
       f.key = key;
       f.read = 0;
-      f.firstId = trace[0]?.id;
+      f.epoch = traceEpoch.value;
       f.rows = [];
     }
     for (; f.read < trace.length; f.read++) {
@@ -175,7 +175,7 @@ export function EventList() {
                 className={`event-row kind-${kindOf(r)}${r.id === selectedRecord ? " selected" : ""}`}
                 style={{ transform: `translateY(${item.start}px)`, height: ROW_H }}
                 onClick={() => useSim.setState({ selectedRecord: r.id })}
-                onDoubleClick={() => sim.seek(r.t)}
+                onDoubleClick={() => sim.seekRecord(r.id)}
                 title="Click to select and see its causes; double-click to rewind the simulation here"
               >
                 <code>{formatRecord(r)}</code>

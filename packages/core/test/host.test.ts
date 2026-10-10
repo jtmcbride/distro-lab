@@ -10,6 +10,7 @@ import {
   type Frame,
   type Scenario,
   type TraceRecord,
+  type Violation,
 } from "../src/index.ts";
 
 const registry = defaultRegistry();
@@ -23,14 +24,18 @@ const scenario = (seed = 3): Scenario => ({
 function collector(host: SimulationHost) {
   const records: TraceRecord[] = [];
   const frames: Frame[] = [];
+  const violations: Violation[] = [];
   const pull = () => {
     const f = host.frame();
     if (f.reset) records.length = 0;
+    if (f.truncateAfter !== null) records.length = f.truncateAfter + 1;
+    if (f.reset || f.truncateAfter !== null) violations.length = 0;
     records.push(...f.records);
+    violations.push(...f.violations);
     frames.push(f);
     return f;
   };
-  return { records, frames, pull };
+  return { records, violations, frames, pull };
 }
 
 const hash = (records: readonly TraceRecord[]) => {
@@ -73,7 +78,7 @@ describe("SimulationHost", () => {
     expect(replay.traceHash).toBe(hash(records));
   });
 
-  it("seeks by replaying, matching a fresh run to that time", () => {
+  it("seeks back and forth, matching a fresh run to that time", () => {
     const host = new SimulationHost(registry, scenario(5));
     const { records, pull } = collector(host);
     host.advanceTo(800);
@@ -82,7 +87,8 @@ describe("SimulationHost", () => {
     pull();
     host.seek(1200);
     const f = pull();
-    expect(f.reset).toBe(true);
+    expect(f).toMatchObject({ reset: false, jumped: true });
+    expect(f.truncateAfter).not.toBeNull();
     expect(host.now).toBe(1200);
     const fresh = runScenario(
       registry,

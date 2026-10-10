@@ -7,7 +7,7 @@ import { formatMs } from "./PlaybackBar.tsx";
 /** Rewinds to a violation and selects the event where it was detected. */
 export function jumpTo(v: Violation): void {
   useSim.setState({ pendingSelection: { record: v.recordId, process: v.nodes[0] ?? null } });
-  sim.seek(v.t);
+  sim.seekRecord(v.recordId);
 }
 
 /** Banner listing safety violations found so far, with jump-to. */

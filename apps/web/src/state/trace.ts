@@ -7,6 +7,12 @@ import type { TraceRecord } from "@distro-lab/core";
  */
 export const trace: TraceRecord[] = [];
 
+/**
+ * Bumped whenever records are removed (new scenario, or going back in time), so readers that
+ * consume the trace incrementally know to start over.
+ */
+export const traceEpoch = { value: 0 };
+
 /** Record lookup by id; ids are contiguous from 0 within one run. */
 export const recordById = (id: number): TraceRecord | undefined => {
   const first = trace[0];

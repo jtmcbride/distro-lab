@@ -40,8 +40,17 @@ function handle(message: ToWorker): void {
     case "stepNotable":
       host.stepToNotable();
       break;
+    case "stepBack":
+      host.stepBack();
+      break;
+    case "stepBackNotable":
+      host.stepBackToNotable();
+      break;
     case "seek":
       host.seek(message.timeMs);
+      break;
+    case "seekRecord":
+      host.seekRecord(message.id);
       break;
     case "act":
       host.act(message.action);
