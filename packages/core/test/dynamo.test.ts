@@ -1,7 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import {
   canonicalJson,
   Dynamo,
+  InvariantMonitor,
   LinkNetwork,
   Simulation,
   TraceRecorder,
@@ -15,6 +16,12 @@ type Action = ScheduledAction<Op, NetworkChange>;
 
 const SERVERS = ["A", "B", "C", "D", "E"];
 const CLIENTS = ["c1", "c2"];
+
+// Every run is also checked against the safety invariants.
+const monitors: InvariantMonitor<Dynamo.DynamoView>[] = [];
+afterEach(() => {
+  for (const m of monitors.splice(0)) expect(m.violations).toEqual([]);
+});
 
 function store(options: {
   seed?: number;
@@ -35,6 +42,11 @@ function store(options: {
     actions: options.actions ?? [],
     sinks: [rec.sink],
   });
+  const monitor = new InvariantMonitor<Dynamo.DynamoView>(
+    sim,
+    Dynamo.dynamoInvariants({ ...Dynamo.DEFAULT_DYNAMO_CONFIG, ...options.config }),
+  );
+  monitors.push(monitor);
   const view = (n: string) => sim.view(n) as Dynamo.DynamoView;
   const annotations = (label: string) =>
     rec.records.filter(
@@ -53,7 +65,7 @@ function store(options: {
       canonicalJson((view(s).data[key] ?? []) as never),
     );
   const hintsLeft = () => servers.some((s) => Object.keys(view(s).hints).length > 0);
-  return { sim, rec, view, annotations, results, values, replicaData, hintsLeft };
+  return { sim, rec, monitor, view, annotations, results, values, replicaData, hintsLeft };
 }
 
 const op = (atMs: number, client: string, command: Op): Action => ({
