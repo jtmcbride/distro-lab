@@ -38,9 +38,15 @@ export interface Frame {
   readonly events: number;
   /** No more scheduled events: the simulation is quiescent. */
   readonly idle: boolean;
+  /** All branches, when they changed since the previous frame (else null). */
+  readonly branches: readonly BranchInfo[] | null;
+  /** The current branch's id. */
+  readonly branch: number;
+  /** The current branch's actions, when they changed since the previous frame (else null). */
+  readonly actions: readonly ScenarioAction[] | null;
 }
 
-type ScenarioAction = Scenario["actions"][number];
+export type ScenarioAction = Scenario["actions"][number];
 
 /** Labels of annotations worth stopping at when stepping. */
 export const NOTABLE_LABELS: ReadonlySet<string> = new Set([
@@ -126,6 +132,8 @@ export class SimulationHost {
   private resetPending = true;
   private truncatePending: number | null = null;
   private jumpPending = true;
+  /** The branch list or current branch's actions changed since the last frame. */
+  private branchesDirty = true;
   /** Extra listeners for records (e.g. while stepping to a notable event). */
   private watchers: ((r: TraceRecord) => void)[] = [];
   playing = false;
@@ -161,6 +169,7 @@ export class SimulationHost {
   }
 
   private newTimeline(t: Omit<Timeline, "id">): Timeline {
+    this.branchesDirty = true;
     const timeline = { id: this.nextTimeline++, ...t };
     this.timelines.set(timeline.id, timeline);
     return timeline;
@@ -206,6 +215,7 @@ export class SimulationHost {
 
   renameBranch(id: number, name: string): void {
     this.timeline(id).name = name;
+    this.branchesDirty = true;
   }
 
   /** Removes a branch other than the current one (its own branches keep their history). */
@@ -213,6 +223,7 @@ export class SimulationHost {
     if (id === this.tl.id) throw new Error("cannot delete the current branch");
     this.timeline(id);
     this.timelines.delete(id);
+    this.branchesDirty = true;
   }
 
   /**
@@ -228,6 +239,7 @@ export class SimulationHost {
     const limit = Math.min(from.trace.length, target.trace.length);
     while (shared < limit && from.trace[shared] === target.trace[shared]) shared++;
     this.tl = target;
+    this.branchesDirty = true;
     this.travel(
       (cp) => cp.t <= now,
       () => true,
@@ -260,6 +272,7 @@ export class SimulationHost {
     // Throws if an action that already ran is missing.
     this.sim.setActions(normalized);
     this.tl.actions = normalized;
+    this.branchesDirty = true;
     this.forgetFuture();
   }
 
@@ -381,6 +394,7 @@ export class SimulationHost {
     const at = Math.round((this.sim.now + LIVE_EPSILON_MS) * 1000) / 1000;
     this.forgetFuture();
     this.sim.schedule(at, action);
+    this.branchesDirty = true;
     this.tl.actions.push(JSON.parse(canonicalJson({ atMs: at, action })) as ScenarioAction);
     this.sim.runUntil(at);
   }
@@ -462,6 +476,8 @@ export class SimulationHost {
     );
     this.sentViolations = this.monitor.violations.length;
     const jumped = this.jumpPending;
+    const branchesChanged = this.branchesDirty;
+    this.branchesDirty = false;
     this.resetPending = false;
     this.truncatePending = null;
     this.jumpPending = false;
@@ -485,6 +501,9 @@ export class SimulationHost {
       speed: this.speed,
       events: this.sim.eventCount,
       idle: this.sim.nextEventTime === undefined,
+      branches: branchesChanged ? this.branches() : null,
+      branch: this.tl.id,
+      actions: branchesChanged ? [...this.tl.actions] : null,
     };
   }
 

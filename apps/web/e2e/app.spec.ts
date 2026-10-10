@@ -146,3 +146,24 @@ test("steps backwards through events and notable moments", async ({ page }) => {
   await expect(page.locator(".node.role-leader")).toHaveCount(1);
   noErrors();
 });
+
+test("a what-if branch without a crash avoids the Figure 8 bug", async ({ page }) => {
+  const noErrors = failOnErrors(page);
+  await open(page);
+  await page.selectOption(".scenario-menu select", "figure8-bug");
+  await seek(page, 350);
+  await page
+    .locator(".branches")
+    .getByRole("button", { name: /Fork here/ })
+    .click();
+  await expect(page.locator(".branch-chip.current")).toContainText("@350.0 ms");
+  await page.getByRole("tab", { name: "Schedule" }).click();
+  await page.getByRole("button", { name: "Remove crash E at 400.0 ms" }).click();
+  await seek(page, 1400);
+  await expect(page.locator(".violations")).toHaveCount(0);
+  // The original branch, at the same moment, still has the violation.
+  await page.locator(".branch-chip").first().getByRole("button").first().click();
+  await expect(page.locator(".violations")).toContainText("leader-completeness");
+  await expect(page.locator(".clock")).toContainText("1,400.0 ms");
+  noErrors();
+});

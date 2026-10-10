@@ -55,6 +55,21 @@ function handle(message: ToWorker): void {
     case "act":
       host.act(message.action);
       break;
+    case "fork":
+      host.fork(message.name);
+      break;
+    case "switchBranch":
+      host.switchBranch(message.id);
+      break;
+    case "deleteBranch":
+      host.deleteBranch(message.id);
+      break;
+    case "renameBranch":
+      host.renameBranch(message.id, message.name);
+      break;
+    case "editActions":
+      host.editActions(message.actions);
+      break;
     case "export":
       post({ type: "scenario", requestId: message.requestId, scenario: host.scenario() });
       return;

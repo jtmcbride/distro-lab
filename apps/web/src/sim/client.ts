@@ -1,4 +1,4 @@
-import type { Action, CanonicalValue, Scenario } from "@distro-lab/core";
+import type { Action, CanonicalValue, Scenario, ScenarioAction } from "@distro-lab/core";
 import { applyFrame, useSim } from "../state/store.ts";
 import type { FromWorker, ToWorker } from "./protocol.ts";
 
@@ -84,6 +84,13 @@ export const sim = {
     send({ type: "seek", timeMs });
   },
   act: (action: Action<CanonicalValue, CanonicalValue>) => send({ type: "act", action }),
+  /** Starts a branch at the current moment and switches to it. */
+  fork: (name?: string) => send(name === undefined ? { type: "fork" } : { type: "fork", name }),
+  switchBranch: (id: number) => send({ type: "switchBranch", id }),
+  deleteBranch: (id: number) => send({ type: "deleteBranch", id }),
+  renameBranch: (id: number, name: string) => send({ type: "renameBranch", id, name }),
+  /** Replaces the current branch's actions (only ones that have not run may change). */
+  editActions: (actions: readonly ScenarioAction[]) => send({ type: "editActions", actions }),
   /** The current scenario including live actions. */
   exportScenario(): Promise<Scenario> {
     const requestId = nextRequest++;

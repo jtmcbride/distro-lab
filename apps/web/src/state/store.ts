@@ -1,5 +1,12 @@
 import { create } from "zustand";
-import type { CanonicalValue, Frame, ProcessState, Violation } from "@distro-lab/core";
+import type {
+  BranchInfo,
+  CanonicalValue,
+  Frame,
+  ProcessState,
+  ScenarioAction,
+  Violation,
+} from "@distro-lab/core";
 import { trace, traceEpoch } from "./trace.ts";
 
 export interface SimState {
@@ -20,6 +27,11 @@ export interface SimState {
   readonly processes: readonly ProcessState[];
   readonly network: CanonicalValue | null;
   readonly violations: readonly Violation[];
+  readonly branches: readonly BranchInfo[];
+  /** Current branch id. */
+  readonly branch: number;
+  /** The current branch's scenario actions. */
+  readonly actions: readonly ScenarioAction[];
   /** Bumped whenever `trace` changes. */
   readonly traceVersion: number;
   readonly error: string | null;
@@ -45,6 +57,9 @@ export const useSim = create<SimState>(() => ({
   processes: [],
   network: null,
   violations: [],
+  branches: [],
+  branch: 0,
+  actions: [],
   traceVersion: 0,
   error: null,
   selectedProcess: null,
@@ -72,6 +87,9 @@ export function applyFrame(frame: Frame): void {
     violations: rewound ? frame.violations : [...s.violations, ...frame.violations],
     traceVersion: rewound || frame.records.length > 0 ? s.traceVersion + 1 : s.traceVersion,
     error: null,
+    branch: frame.branch,
+    ...(frame.branches === null ? {} : { branches: frame.branches }),
+    ...(frame.actions === null ? {} : { actions: frame.actions }),
     ...(frame.jumped && s.pendingSelection !== null
       ? {
           selectedRecord: s.pendingSelection.record,

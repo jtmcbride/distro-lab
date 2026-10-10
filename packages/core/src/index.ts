@@ -80,4 +80,5 @@ export {
   type CheckpointPolicy,
   type Frame,
   type ProcessState,
+  type ScenarioAction,
 } from "./host/host.ts";
