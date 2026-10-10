@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { CanonicalValue, LinkNetworkView, NetworkChange } from "@distro-lab/core";
-import { clientCaption } from "../protocolUi.ts";
+import { clientCaption, useProtocolUi } from "../protocols/index.ts";
 import { sim } from "../sim/client.ts";
 import { useSim } from "../state/store.ts";
 import { Schedule } from "./Schedule.tsx";
@@ -218,23 +218,11 @@ function NetworkWide() {
 
 function ClientTool() {
   const { processes } = useSim();
+  const ui = useProtocolUi();
   const clients = processes.filter((p) => p.role === "client");
   const [client, setClient] = useState(clients[0]?.id ?? "");
-  const [op, setOp] = useState<"put" | "get" | "cas">("put");
-  const [key, setKey] = useState("x");
-  const [value, setValue] = useState("1");
-  const [expect, setExpect] = useState("");
   const current = clients.find((c) => c.id === client) ?? clients[0];
   if (current === undefined) return <p className="muted">This scenario has no clients.</p>;
-  const send = () => {
-    const command =
-      op === "get"
-        ? { type: "get", key }
-        : op === "put"
-          ? { type: "put", key, value }
-          : { type: "cas", key, expect: expect === "" ? null : expect, value };
-    sim.act({ type: "client", node: current.id, command });
-  };
   return (
     <div className="tool">
       <div className="row">
@@ -246,45 +234,12 @@ function ClientTool() {
             ))}
           </select>
         </label>
-        <label className="field">
-          Operation
-          <select value={op} onChange={(e) => setOp(e.target.value as typeof op)}>
-            <option value="put">put</option>
-            <option value="get">get</option>
-            <option value="cas">cas</option>
-          </select>
-        </label>
-        <label className="field">
-          Key
-          <input value={key} onChange={(e) => setKey(e.target.value)} size={6} />
-        </label>
-        {op !== "get" && (
-          <label className="field">
-            Value
-            <input value={value} onChange={(e) => setValue(e.target.value)} size={6} />
-          </label>
-        )}
-        {op === "cas" && (
-          <label className="field">
-            Expect
-            <input
-              value={expect}
-              onChange={(e) => setExpect(e.target.value)}
-              size={6}
-              placeholder="absent"
-            />
-          </label>
-        )}
       </div>
-      <div className="row">
-        <button type="button" className="primary" onClick={send} disabled={!current.up}>
-          Send from {current.id}
-        </button>
-        <span className="muted small">
-          {current.up ? clientCaption(current.view) : "client is down"}. Operations queue and run
-          one at a time; select the client in the cluster to see results.
-        </span>
-      </div>
+      <ui.ClientForm client={current} />
+      <p className="muted small">
+        {current.up ? clientCaption(current.view) : "client is down"}. Operations queue and run one
+        at a time; select the client in the cluster to see results.
+      </p>
     </div>
   );
 }

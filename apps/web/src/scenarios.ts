@@ -1,5 +1,6 @@
 import {
   defaultRegistry,
+  Dynamo,
   Raft,
   SCENARIO_VERSION,
   scenarioForSeed,
@@ -41,5 +42,30 @@ export const SCENARIO_CHOICES: readonly ScenarioChoice[] = [
     id: "fuzz",
     label: "Random faults (fuzz seed 1)",
     make: () => scenarioForSeed(registry, 1, { protocol: "raft" }),
+  },
+  {
+    id: "dynamo-sandbox",
+    label: "Dynamo sandbox: 5 servers, 2 clients",
+    make: () => sandbox("dynamo"),
+  },
+  {
+    id: "dynamo-concurrent",
+    label: "Dynamo: concurrent writes make siblings",
+    make: () => Dynamo.concurrentWritesScenario(),
+  },
+  {
+    id: "dynamo-sloppy",
+    label: "Dynamo: sloppy quorum, stale read",
+    make: () => Dynamo.sloppyQuorumScenario(),
+  },
+  {
+    id: "dynamo-strict",
+    label: "Dynamo: strict quorum, unavailable",
+    make: () => Dynamo.strictQuorumScenario(),
+  },
+  {
+    id: "dynamo-fuzz",
+    label: "Dynamo: random faults (fuzz seed 1)",
+    make: () => scenarioForSeed(registry, 1, { protocol: "dynamo" }),
   },
 ];

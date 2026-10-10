@@ -64,6 +64,9 @@ export const sim = {
       scenarioName: name,
       protocol: scenario.protocol,
       config: scenario.config,
+      // Until the worker's first frame, there is nothing of the new scenario to show (and the
+      // old processes' views belong to the old protocol).
+      processes: [],
       durationMs: scenario.durationMs,
       selectedProcess: null,
       selectedRecord: null,

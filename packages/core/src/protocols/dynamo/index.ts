@@ -1,7 +1,14 @@
 export * from "./clock.ts";
 export { preferenceList, replicasOf, TOKENS_PER_SERVER } from "./ring.ts";
 export * from "./types.ts";
-export { dynamo, dynamoClient, emptySlot, isEmptySlot, type PlantedDynamoBugs } from "./dynamo.ts";
+export {
+  dynamo,
+  dynamoClient,
+  emptySlot,
+  isEmptySlot,
+  slotDigest,
+  type PlantedDynamoBugs,
+} from "./dynamo.ts";
 export * from "./crdt.ts";
 export { dynamoInvariants, promisesReadYourWrites } from "./invariants.ts";
 export { dynamoWorkload } from "./workload.ts";
