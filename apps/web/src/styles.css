@@ -123,6 +123,91 @@ button.primary {
   border-radius: 8px;
 }
 
+.branches {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: -6px;
+}
+
+.branch-chip {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  overflow: hidden;
+  max-width: 100%;
+}
+
+.branch-chip button {
+  border: none;
+  border-radius: 0;
+  padding: 3px 10px;
+  font-size: 0.82rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.branch-chip button.icon {
+  padding: 3px 8px;
+  border-left: 1px solid var(--border);
+}
+
+.branch-chip.current {
+  border-color: var(--accent);
+}
+
+.branch-chip.current button:first-child {
+  background: var(--accent);
+  color: var(--accent-fg);
+}
+
+.branch-chip.current button:first-child .muted {
+  color: inherit;
+  opacity: 0.8;
+}
+
+.schedule-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.schedule-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.schedule-list li.done {
+  color: var(--muted);
+}
+
+.schedule-list button {
+  padding: 1px 8px;
+  font-size: 0.78rem;
+}
+
+.schedule-time {
+  font-variant-numeric: tabular-nums;
+  min-width: 6.5em;
+}
+
+.schedule-what {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 0.78rem;
+}
+
 .scrubber {
   flex: 1 1 200px;
   min-width: 120px;
@@ -719,6 +804,7 @@ pre.payload {
 
 .tabs {
   display: flex;
+  flex-wrap: wrap;
   gap: 4px;
   margin-bottom: 8px;
   border-bottom: 1px solid var(--border);
@@ -860,4 +946,116 @@ pre.payload {
   padding-left: 18px;
   max-height: 160px;
   overflow: auto;
+}
+
+.compare-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+
+.compare-head h2 {
+  margin: 0;
+}
+
+.compare-head .icon {
+  margin-left: auto;
+}
+
+.compare-body {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 12px 20px;
+  margin-top: 8px;
+}
+
+.compare-body h3 {
+  font-size: 0.85rem;
+  margin: 0 0 6px;
+}
+
+.compare-state {
+  grid-column: 1 / -1;
+  overflow-x: auto;
+}
+
+.compare-table {
+  border-collapse: collapse;
+  font-size: 0.8rem;
+  width: 100%;
+}
+
+.compare-table th,
+.compare-table td {
+  text-align: left;
+  padding: 2px 8px 2px 0;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+
+.compare-table tr.differs td {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.compare .fields dd code,
+.compare-table code {
+  word-break: break-all;
+}
+
+.minimize {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  align-items: center;
+  padding: 8px 12px;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 8%, var(--panel));
+  font-size: 0.85rem;
+}
+
+.minimize-lists {
+  flex-basis: 100%;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 6px 20px;
+}
+
+.minimize ul {
+  margin: 4px 0 0;
+  padding-left: 18px;
+  max-height: 160px;
+  overflow: auto;
+}
+
+.explain {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  align-items: center;
+  padding: 8px 12px;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 8%, var(--panel));
+  font-size: 0.85rem;
+}
+
+.explain-lists {
+  flex-basis: 100%;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 6px 20px;
+}
+
+.explain ul {
+  margin: 4px 0 0;
+  padding-left: 18px;
+  max-height: 140px;
+  overflow: auto;
+}
+
+.event-row.outside {
+  opacity: 0.35;
 }

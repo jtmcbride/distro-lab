@@ -119,3 +119,82 @@ test("fits a phone-width screen without sideways scrolling", async ({ page }) =>
   );
   expect(overflow).toBeLessThanOrEqual(0);
 });
+
+test("steps backwards through events and notable moments", async ({ page }) => {
+  const noErrors = failOnErrors(page);
+  await open(page);
+  for (let i = 0; i < 2; i++) await page.getByRole("button", { name: "Next notable" }).click();
+  await expect(page.locator(".node.role-leader")).toHaveCount(1);
+  const events = async () =>
+    Number(
+      (await page.locator(".clock .muted").textContent())!
+        .match(/([\d,]+) events/)![1]!
+        .replace(/,/g, ""),
+    );
+  const before = await events();
+  await page.getByRole("button", { name: "Step back" }).click();
+  await expect.poll(events).toBe(before - 1);
+  // Back past the election: nobody leads, and the becameLeader row is gone.
+  await page.getByRole("button", { name: "Previous notable" }).click();
+  await page.getByRole("button", { name: "Previous notable" }).click();
+  await expect(page.locator(".node.role-leader")).toHaveCount(0);
+  await expect(page.locator(".event-row", { hasText: "becameLeader" })).toHaveCount(0);
+  // Keyboard shortcuts are ignored while a button has focus.
+  await page.locator(".cluster svg").click({ position: { x: 5, y: 5 } });
+  await page.keyboard.press("Shift+ArrowRight");
+  await page.keyboard.press("Shift+ArrowRight");
+  await expect(page.locator(".node.role-leader")).toHaveCount(1);
+  noErrors();
+});
+
+test("a what-if branch without a crash avoids the Figure 8 bug", async ({ page }) => {
+  const noErrors = failOnErrors(page);
+  await open(page);
+  await page.selectOption(".scenario-menu select", "figure8-bug");
+  await seek(page, 350);
+  await page
+    .locator(".branches")
+    .getByRole("button", { name: /Fork here/ })
+    .click();
+  await expect(page.locator(".branch-chip.current")).toContainText("@350.0 ms");
+  await page.getByRole("tab", { name: "Schedule" }).click();
+  await page.getByRole("button", { name: "Remove crash E at 400.0 ms" }).click();
+  await seek(page, 1400);
+  await expect(page.locator(".violations")).toHaveCount(0);
+
+  // Compare with the original: it diverges where the crash was removed.
+  await page.locator(".branches").getByRole("button", { name: "Compare" }).click();
+  const compare = page.locator(".compare");
+  await expect(compare.locator(".fields")).toContainText("crash E");
+  await expect(compare.locator("tr.differs", { hasText: "Safety violations" })).toContainText(
+    "leader-completeness",
+  );
+  await compare.getByRole("button", { name: "Jump here" }).click();
+  await expect(page.locator(".clock")).toContainText("400.0 ms");
+  await expect(page.locator(".event-row.selected")).toHaveCount(1);
+  await seek(page, 1400);
+
+  // The original branch, at the same moment, still has the violation.
+  await page.locator(".branch-chip").first().getByRole("button").first().click();
+  await expect(page.locator(".violations")).toContainText("leader-completeness");
+  await expect(page.locator(".clock")).toContainText("1,400.0 ms");
+  noErrors();
+});
+
+test("explains a violation by its causal past", async ({ page }) => {
+  const noErrors = failOnErrors(page);
+  await open(page);
+  await page.selectOption(".scenario-menu select", "figure8-bug");
+  await seek(page, 700);
+  await page.locator(".violations").getByRole("button", { name: "Explain" }).click();
+  const card = page.locator(".explain");
+  await expect(card).toContainText("Causal past of the leader-completeness violation");
+  // Figure 8 needs its crashes: they are in the causal past or mattered by dropping messages.
+  await expect(card.locator("li", { hasText: "crash" })).not.toHaveCount(0);
+  await expect(page.locator(".event-row.outside")).not.toHaveCount(0);
+  await page.getByLabel("Causal past only").check();
+  await expect(page.locator(".event-row.outside")).toHaveCount(0);
+  await card.getByRole("button", { name: "Close" }).click();
+  await expect(card).toHaveCount(0);
+  noErrors();
+});

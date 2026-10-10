@@ -3,6 +3,7 @@ import { messageStyle } from "../protocolUi.ts";
 import { useSim } from "../state/store.ts";
 import { trace } from "../state/trace.ts";
 import { chainSends } from "../state/causes.ts";
+import { currentCone } from "../state/cone.ts";
 import { firstAtOrAfter, outcomesIn } from "../state/traceIndex.ts";
 
 const ROW_H = 30;
@@ -30,7 +31,7 @@ function resolveColor(el: Element, color: string): string {
  * its send to its arrival (or drop). Follows the playhead unless the view was panned.
  */
 export function SpaceTime() {
-  const { now, processes, selectedRecord, traceVersion } = useSim();
+  const { now, processes, selectedRecord, traceVersion, explain } = useSim();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const segments = useRef<Segment[]>([]);
   const [width, setWidth] = useState(800);
@@ -142,6 +143,8 @@ export function SpaceTime() {
 
     // Messages; those on the selected record's causal chain are highlighted.
     const highlighted = chainSends(selectedRecord);
+    // While explaining, messages outside the causal past fade out.
+    const cone = currentCone();
     const outcomes = outcomesIn(from, Math.min(trace.length, firstAtOrAfter(end + LOOKBACK_MS)));
     const segs: Segment[] = [];
     for (let i = from; i < to; i++) {
@@ -156,7 +159,9 @@ export function SpaceTime() {
       ctx.strokeStyle = selected ? accent : color(style.color);
       ctx.fillStyle = ctx.strokeStyle;
       ctx.lineWidth = selected ? 2.5 : style.minor ? 0.8 : 1.4;
-      ctx.globalAlpha = selected ? 1 : style.minor ? 0.45 : 0.9;
+      ctx.globalAlpha =
+        (selected ? 1 : style.minor ? 0.45 : 0.9) *
+        (cone !== null && !selected && !cone.past.has(r.id) ? 0.15 : 1);
       const results = outcomes.get(r.id) ?? [];
       if (r.arrivals.length === 0) {
         // Dropped when sent: a short stub with a cross.
@@ -210,6 +215,7 @@ export function SpaceTime() {
     start,
     end,
     selectedRecord,
+    explain,
     hideHeartbeats,
     processes,
     ids,

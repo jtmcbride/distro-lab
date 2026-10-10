@@ -1,4 +1,4 @@
-import type { Scenario } from "./scenario.ts";
+import { failureKind, runScenario, type ProtocolEntry, type Scenario } from "./scenario.ts";
 
 /**
  * Delta debugging: simplifies the network, then drops chunks of actions (halving the chunk
@@ -10,8 +10,18 @@ import type { Scenario } from "./scenario.ts";
 export function minimizeScenario(
   scenario: Scenario,
   stillFails: (candidate: Scenario) => boolean,
+  /** Called after every candidate run with the smallest failing scenario so far. */
+  onProgress?: (best: Scenario, runs: number) => void,
 ): Scenario {
   let best = scenario;
+  let runs = 0;
+  const test = (candidate: Scenario) => {
+    const fails = stillFails(candidate);
+    runs++;
+    if (fails) best = candidate;
+    onProgress?.(best, runs);
+    return fails;
+  };
   // Repairs at the start of the liveness window are part of the property being tested, not
   // faults: dropping them would turn any liveness failure into "a node is still down".
   const repairsFrom =
@@ -24,7 +34,7 @@ export function minimizeScenario(
       ...best,
       network: { ...best.network, defaults: { ...best.network.defaults, ...simplification } },
     };
-    if (stillFails(candidate)) best = candidate;
+    test(candidate);
   }
 
   const keep = (a: Scenario["actions"][number]) =>
@@ -39,13 +49,30 @@ export function minimizeScenario(
     for (let end = faults.length; end > 0; end -= size) {
       const drop = new Set(faults.slice(Math.max(0, end - size), end));
       const candidate: Scenario = { ...best, actions: best.actions.filter((a) => !drop.has(a)) };
-      if (stillFails(candidate)) {
-        best = candidate;
-        changed = true;
-      }
+      if (test(candidate)) changed = true;
     }
     if (size > 1) size = Math.floor(size / 2);
     else if (!changed) break;
   }
   return best;
+}
+
+/**
+ * Minimizes a failing scenario so that it still fails the same way (same first violated
+ * invariant, or a liveness failure). Returns null if the scenario does not fail. This is
+ * what `sim fuzz` does with each failure.
+ */
+export function minimizeFailure(
+  registry: ReadonlyMap<string, ProtocolEntry>,
+  scenario: Scenario,
+  onProgress?: (best: Scenario, runs: number) => void,
+): { kind: string; minimized: Scenario } | null {
+  const kind = failureKind(runScenario(registry, scenario));
+  if (kind === null) return null;
+  const minimized = minimizeScenario(
+    scenario,
+    (s) => failureKind(runScenario(registry, s)) === kind,
+    onProgress,
+  );
+  return { kind, minimized };
 }

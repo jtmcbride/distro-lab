@@ -1,9 +1,9 @@
 import { canonicalJson, type CanonicalValue } from "./canonical.ts";
-import { EventQueue } from "./eventQueue.ts";
+import { EventQueue, type Queued } from "./eventQueue.ts";
 import type { Observable } from "./invariants.ts";
 import type { Network } from "./network.ts";
 import type { NodeContext, NodeId, NodeState, Protocol } from "./protocol.ts";
-import { Rng } from "./rng.ts";
+import { Rng, type RngState } from "./rng.ts";
 import type { DropReason, TraceRecord, TraceSink } from "./trace.ts";
 
 export type Action<C, N> =
@@ -74,7 +74,7 @@ interface NodeRuntime<M, C> {
   incarnation: number;
   state: NodeState<unknown, unknown>;
   /** Armed timers: key -> the firing that is still valid. */
-  readonly timers: Map<string, { readonly id: number; readonly at: number }>;
+  timers: Map<string, { readonly id: number; readonly at: number }>;
 }
 
 type Effect<M> =
@@ -104,6 +104,31 @@ function at(now: number, delayMs: number): number {
   return Math.round((now + delayMs) * 1000) / 1000;
 }
 
+/**
+ * A simulation's mutable state between steps. `saveState` returns live references, so the
+ * caller deep-copies it (see snapshot.ts) and `loadState` takes ownership of what it gets.
+ */
+export interface SimulationState {
+  readonly clock: number;
+  readonly nextRecordId: number;
+  readonly nextTimerId: number;
+  readonly processed: number;
+  readonly queue: readonly Queued<unknown>[];
+  readonly nextSeq: number;
+  readonly netRng: RngState;
+  readonly network: unknown;
+  readonly actionLog: readonly ScheduledAction<unknown, unknown>[];
+  readonly processedActions: readonly ScheduledAction<unknown, unknown>[];
+  readonly processes: readonly {
+    readonly id: NodeId;
+    readonly up: boolean;
+    readonly incarnation: number;
+    readonly state: NodeState<unknown, unknown>;
+    readonly timers: Map<string, { readonly id: number; readonly at: number }>;
+    readonly rng: RngState;
+  }[];
+}
+
 /** What harnesses (chaos runner, CLI, UI) need from a simulation, independent of protocol. */
 export interface RunnableSimulation extends Observable {
   readonly eventCount: number;
@@ -119,7 +144,11 @@ export interface RunnableSimulation extends Observable {
   /* eslint-disable @typescript-eslint/no-explicit-any */
   schedule(atMs: number, action: Action<any, any>): void;
   actions(): readonly ScheduledAction<any, any>[];
+  setActions(all: readonly ScheduledAction<any, any>[]): void;
   /* eslint-enable @typescript-eslint/no-explicit-any */
+  saveState(): SimulationState;
+  /** Restores state saved by a simulation built from the same scenario. */
+  loadState(state: SimulationState): void;
 }
 
 /**
@@ -143,7 +172,9 @@ export class Simulation<
   private readonly runtimes = new Map<NodeId, NodeRuntime<M, C>>();
   private readonly sinks: TraceSink[];
   private readonly stepListeners: (() => void)[] = [];
-  private readonly actionLog: ScheduledAction<C, N>[] = [];
+  private actionLog: ScheduledAction<C, N>[] = [];
+  /** Actions already run, in the order they ran. */
+  private processedActions: ScheduledAction<C, N>[] = [];
   private readonly seed: number;
   private clock = 0;
   private nextRecordId = 0;
@@ -283,6 +314,40 @@ export class Simulation<
 
   /** Schedules an external action. It becomes part of the scenario, so replays include it. */
   schedule(atMs: number, action: Action<C, N>): void {
+    this.actionLog.push(this.enqueue(atMs, action));
+  }
+
+  /**
+   * Makes `all` the run's scenario actions. Every action already processed must be in it
+   * (matched by value); the rest replace whatever was still pending. Continues a restored
+   * checkpoint with actions added after it was taken, or with a branch's edits.
+   *
+   * New actions should be later than every processed event at their time (as live actions
+   * are), or the run differs from a fresh replay, which queues actions ahead of protocol
+   * events at the same instant.
+   */
+  setActions(all: readonly ScheduledAction<C, N>[]): void {
+    const done = new Map<string, number>();
+    for (const a of this.processedActions) {
+      const k = canonicalJson(a as unknown as CanonicalValue);
+      done.set(k, (done.get(k) ?? 0) + 1);
+    }
+    const future: ScheduledAction<C, N>[] = [];
+    for (const a of all) {
+      const k = canonicalJson(a as unknown as CanonicalValue);
+      const n = done.get(k) ?? 0;
+      if (n > 0) done.set(k, n - 1);
+      else future.push(a);
+    }
+    for (const [k, n] of done) {
+      if (n > 0) throw new Error(`already processed action is missing: ${k}`);
+    }
+    this.queue.removeWhere((item) => item.kind === "action");
+    this.actionLog = [...this.processedActions];
+    for (const a of future) this.schedule(a.atMs, a.action);
+  }
+
+  private enqueue(atMs: number, action: Action<C, N>): ScheduledAction<C, N> {
     if (!Number.isFinite(atMs) || atMs < this.clock) {
       throw new RangeError(`cannot schedule at ${atMs}ms (now ${this.clock}ms)`);
     }
@@ -290,8 +355,8 @@ export class Simulation<
     // Round-trip through canonical JSON so the logged action is plain data and the caller
     // cannot mutate it later.
     const stored = JSON.parse(canonicalJson(action)) as Action<C, N>;
-    this.actionLog.push({ atMs, action: stored });
     this.queue.push(atMs, { kind: "action", action: stored }, ACTION);
+    return { atMs, action: stored };
   }
 
   /** Everything needed to replay this run with the same protocol and network setup. */
@@ -303,6 +368,52 @@ export class Simulation<
     return this.seed;
   }
 
+  saveState(): SimulationState {
+    return {
+      clock: this.clock,
+      nextRecordId: this.nextRecordId,
+      nextTimerId: this.nextTimerId,
+      processed: this.processed,
+      queue: this.queue.entries(),
+      nextSeq: this.queue.seqCounter,
+      netRng: this.netRng.getState(),
+      network: this.network.saveState?.(),
+      actionLog: this.actionLog,
+      processedActions: this.processedActions,
+      processes: [...this.runtimes.values()].map((r) => ({
+        id: r.id,
+        up: r.up,
+        incarnation: r.incarnation,
+        state: r.state,
+        timers: r.timers,
+        rng: r.rng.getState(),
+      })),
+    };
+  }
+
+  loadState(state: SimulationState): void {
+    if (state.processes.length !== this.runtimes.size) {
+      throw new Error("state is from a simulation with different processes");
+    }
+    this.clock = state.clock;
+    this.nextRecordId = state.nextRecordId;
+    this.nextTimerId = state.nextTimerId;
+    this.processed = state.processed;
+    this.queue.load(state.queue as Queued<Pending<C, N>>[], state.nextSeq);
+    this.netRng.setState(state.netRng);
+    if (state.network !== undefined) this.network.loadState?.(state.network);
+    this.actionLog = state.actionLog as ScheduledAction<C, N>[];
+    this.processedActions = state.processedActions as ScheduledAction<C, N>[];
+    for (const p of state.processes) {
+      const r = this.runtime(p.id);
+      r.up = p.up;
+      r.incarnation = p.incarnation;
+      r.state = p.state;
+      r.timers = p.timers;
+      r.rng.setState(p.rng);
+    }
+  }
+
   /** Processes the next event. Returns false when there is nothing left to do. */
   step(): boolean {
     const next = this.queue.pop();
@@ -312,6 +423,7 @@ export class Simulation<
     const ev = next.item;
     switch (ev.kind) {
       case "action":
+        this.processedActions.push({ atMs: next.timeMs, action: ev.action });
         this.runAction(ev.action);
         break;
       case "deliver":

@@ -3,8 +3,9 @@ import type { CanonicalValue, LinkNetworkView, NetworkChange } from "@distro-lab
 import { clientCaption } from "../protocolUi.ts";
 import { sim } from "../sim/client.ts";
 import { useSim } from "../state/store.ts";
+import { Schedule } from "./Schedule.tsx";
 
-type Tab = "links" | "partition" | "network" | "clients";
+type Tab = "links" | "partition" | "network" | "clients" | "schedule";
 
 const net = (change: NetworkChange) =>
   sim.act({ type: "network", change: change as unknown as CanonicalValue });
@@ -295,6 +296,7 @@ export function Tools() {
     { id: "partition", label: "Partition" },
     { id: "links", label: "Links" },
     { id: "network", label: "Network" },
+    { id: "schedule", label: "Schedule" },
   ];
   return (
     <div>
@@ -316,6 +318,7 @@ export function Tools() {
       {tab === "partition" && <PartitionBuilder />}
       {tab === "links" && <LinkEditor />}
       {tab === "network" && <NetworkWide />}
+      {tab === "schedule" && <Schedule />}
     </div>
   );
 }

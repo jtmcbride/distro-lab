@@ -78,6 +78,24 @@ export class EventQueue<T> {
     return [...this.heap].sort((x, y) => (before(x, y) ? -1 : before(y, x) ? 1 : 0));
   }
 
+  /** The entries in internal (heap) order, for a snapshot; pass them back to `load`. */
+  entries(): Queued<T>[] {
+    return [...this.heap];
+  }
+
+  /** Replaces the contents with entries from `entries()` and the matching `seqCounter`. */
+  load(entries: readonly Queued<T>[], nextSeq: number): void {
+    this.heap = [...entries];
+    this.nextSeq = nextSeq;
+  }
+
+  /** Removes every entry whose item matches. */
+  removeWhere(predicate: (item: T) => boolean): void {
+    this.heap = this.heap
+      .filter((e) => !predicate(e.item))
+      .sort((x, y) => (before(x, y) ? -1 : before(y, x) ? 1 : 0));
+  }
+
   /** Rebuild from a snapshot; entries keep their original seq. */
   static fromEntries<T>(entries: readonly Queued<T>[], nextSeq: number): EventQueue<T> {
     const q = new EventQueue<T>(nextSeq);

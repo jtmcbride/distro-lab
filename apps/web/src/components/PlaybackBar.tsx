@@ -7,7 +7,7 @@ const SPEEDS = [0.01, 0.03, 0.1, 0.3, 1, 3, 10];
 export const formatMs = (ms: number) =>
   `${ms.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })} ms`;
 
-/** Play/pause, stepping, speed, and a scrubber that seeks by deterministic replay. */
+/** Play/pause, stepping both ways, speed, and a scrubber that seeks as it is dragged. */
 export function PlaybackBar() {
   const { now, durationMs, playing, speed, events, idle } = useSim();
   // While dragging, show the scrub position locally; seek once on release.
@@ -25,6 +25,9 @@ export function PlaybackBar() {
       } else if (e.key === "ArrowRight") {
         if (e.shiftKey) sim.stepNotable();
         else sim.step();
+      } else if (e.key === "ArrowLeft") {
+        if (e.shiftKey) sim.stepBackNotable();
+        else sim.stepBack();
       }
     };
     window.addEventListener("keydown", onKey);
@@ -43,6 +46,24 @@ export function PlaybackBar() {
         title="Play / pause (space)"
       >
         {playing ? "⏸ Pause" : "▶ Play"}
+      </button>
+      <button
+        type="button"
+        onClick={() => sim.stepBackNotable()}
+        title="Back to the previous election, leader change, completed request or violation (shift+←)"
+        disabled={playing}
+        aria-label="Previous notable"
+      >
+        ⏪
+      </button>
+      <button
+        type="button"
+        onClick={() => sim.stepBack()}
+        title="Back one event (←)"
+        disabled={playing}
+        aria-label="Step back"
+      >
+        ◀
       </button>
       <button type="button" onClick={() => sim.step()} title="One event (→)" disabled={playing}>
         Step
@@ -73,7 +94,11 @@ export function PlaybackBar() {
         max={end}
         step={1}
         value={scrub ?? now}
-        onChange={(e) => setScrub(Number(e.target.value))}
+        onChange={(e) => {
+          const t = Number(e.target.value);
+          setScrub(t);
+          sim.scrub(t);
+        }}
         onPointerUp={() => {
           if (scrub !== null) sim.seek(scrub);
           setScrub(null);

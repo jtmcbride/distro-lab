@@ -1,8 +1,7 @@
 import { generateScenario, type GenerateOptions } from "./generate.ts";
-import { minimizeScenario } from "./minimize.ts";
+import { minimizeFailure } from "./minimize.ts";
 import {
   failed,
-  failureKind,
   runScenario,
   type ProtocolEntry,
   type RunResult,
@@ -61,14 +60,10 @@ export function fuzz(
     runs++;
     events += result.events;
     if (failed(result)) {
-      const kind = failureKind(result);
       const minimized =
         options.minimize === false
           ? result.scenario
-          : minimizeScenario(
-              result.scenario,
-              (s) => failureKind(runScenario(registry, s)) === kind,
-            );
+          : (minimizeFailure(registry, result.scenario)?.minimized ?? result.scenario);
       failures.push({ result, minimized });
       if (failures.length >= (options.maxFailures ?? 1)) break;
     }

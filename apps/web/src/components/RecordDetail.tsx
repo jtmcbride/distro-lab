@@ -1,4 +1,5 @@
-import { formatRecord } from "@distro-lab/core";
+import { formatRecord, processOf } from "@distro-lab/core";
+import { explain } from "../state/cone.ts";
 import { messageStyle } from "../protocolUi.ts";
 import { useSim } from "../state/store.ts";
 import { recordById } from "../state/trace.ts";
@@ -63,6 +64,21 @@ export function RecordDetail() {
   );
 }
 
+function ExplainButton({ id }: { id: number }) {
+  const r = recordById(id);
+  const p = r === undefined ? null : processOf(r);
+  if (p === null) return null;
+  return (
+    <button
+      type="button"
+      onClick={() => explain(id, [p], `#${id}`)}
+      title="Dim everything that could not have influenced this event"
+    >
+      Show causal past
+    </button>
+  );
+}
+
 /** The chain of events that led to a record, newest first; each step is selectable. */
 function Why({ id }: { id: number }) {
   const chain = causalChain(id).slice(1);
@@ -72,6 +88,7 @@ function Why({ id }: { id: number }) {
   return (
     <div className="why">
       <h3>Why did this happen?</h3>
+      <ExplainButton id={id} />
       <ol>
         {chain.map((c) => (
           <li key={c.id}>

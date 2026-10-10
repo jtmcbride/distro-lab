@@ -15,8 +15,10 @@ pnpm check   # format, lint, typecheck, test
 - `packages/cli`: `sim` command-line tool (runs directly on Node 22 via type stripping).
 - `apps/web`: interactive browser app (simulation in a Web Worker; cluster view, message
   timeline, node inspector, log grid, causal event list, fault and client tools, share
-  links). `pnpm -C apps/web dev` to develop; `pnpm -C apps/web e2e` runs the Playwright
-  suite. Deployed to GitHub Pages from `main`.
+  links; time travel with step back and live scrubbing, what-if branches with a schedule
+  editor and comparison, in-browser minimization, causal explanations of violations).
+  `pnpm -C apps/web dev` to develop; `pnpm -C apps/web e2e` runs the Playwright suite.
+  Deployed to GitHub Pages from `main`.
 
 ## CLI
 

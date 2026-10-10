@@ -1,14 +1,19 @@
 import { create } from "zustand";
-import type { CanonicalValue, Frame, ProcessState, Violation } from "@distro-lab/core";
-import { trace } from "./trace.ts";
+import type {
+  BranchInfo,
+  CanonicalValue,
+  Frame,
+  ProcessState,
+  ScenarioAction,
+  Violation,
+} from "@distro-lab/core";
+import { trace, traceEpoch } from "./trace.ts";
 
 export interface SimState {
   readonly loaded: boolean;
   readonly protocol: string;
   /** Display name of the loaded scenario. */
   readonly scenarioName: string;
-  /** After an import or share link, jump to the first violation once one is known. */
-  readonly jumpToViolation: boolean;
   /** Protocol config of the loaded scenario (e.g. Raft timeouts). */
   readonly config: CanonicalValue | undefined;
   readonly now: number;
@@ -20,6 +25,29 @@ export interface SimState {
   readonly processes: readonly ProcessState[];
   readonly network: CanonicalValue | null;
   readonly violations: readonly Violation[];
+  readonly branches: readonly BranchInfo[];
+  /** Current branch id. */
+  readonly branch: number;
+  /** The current branch's scenario actions. */
+  readonly actions: readonly ScenarioAction[];
+  /** Progress of a running minimization. */
+  readonly minimizing: { runs: number; actions: number; total: number } | null;
+  /** Result of the last minimization, until dismissed. */
+  readonly minimized:
+    | {
+        kind: string;
+        total: number;
+        /** Actions from here on are repairs for the liveness check, which are always kept. */
+        repairsFrom: number;
+        kept: readonly ScenarioAction[];
+        removed: readonly ScenarioAction[];
+      }
+    | { problem: string }
+    | null;
+  /** Moment whose causal past is shown: right after `record`, as seen by `nodes`. */
+  readonly explain: { record: number; nodes: readonly string[]; label: string } | null;
+  /** Branch shown in the comparison panel, if open. */
+  readonly compareWith: number | null;
   /** Bumped whenever `trace` changes. */
   readonly traceVersion: number;
   readonly error: string | null;
@@ -34,7 +62,6 @@ export const useSim = create<SimState>(() => ({
   loaded: false,
   protocol: "raft",
   scenarioName: "",
-  jumpToViolation: false,
   config: undefined,
   now: 0,
   durationMs: 0,
@@ -45,6 +72,13 @@ export const useSim = create<SimState>(() => ({
   processes: [],
   network: null,
   violations: [],
+  branches: [],
+  branch: 0,
+  actions: [],
+  compareWith: null,
+  explain: null,
+  minimizing: null,
+  minimized: null,
   traceVersion: 0,
   error: null,
   selectedProcess: null,
@@ -54,7 +88,10 @@ export const useSim = create<SimState>(() => ({
 
 /** Folds a worker frame into the store and the shared trace. */
 export function applyFrame(frame: Frame): void {
+  const rewound = frame.reset || frame.truncateAfter !== null;
   if (frame.reset) trace.length = 0;
+  else if (frame.truncateAfter !== null) trace.length = frame.truncateAfter + 1;
+  if (rewound) traceEpoch.value++;
   for (const r of frame.records) trace.push(r);
   useSim.setState((s) => ({
     loaded: true,
@@ -66,17 +103,29 @@ export function applyFrame(frame: Frame): void {
     idle: frame.idle,
     processes: frame.processes,
     network: frame.network,
-    violations: frame.reset ? frame.violations : [...s.violations, ...frame.violations],
-    traceVersion: frame.reset || frame.records.length > 0 ? s.traceVersion + 1 : s.traceVersion,
+    violations: rewound ? frame.violations : [...s.violations, ...frame.violations],
+    traceVersion: rewound || frame.records.length > 0 ? s.traceVersion + 1 : s.traceVersion,
     error: null,
-    ...(frame.reset
-      ? s.pendingSelection === null
-        ? { selectedRecord: null }
-        : {
-            selectedRecord: s.pendingSelection.record,
-            selectedProcess: s.pendingSelection.process,
-            pendingSelection: null,
-          }
+    branch: frame.branch,
+    // Switching to the branch being compared with swaps the two.
+    ...(frame.branch !== s.branch && s.compareWith === frame.branch
+      ? { compareWith: s.branch }
       : {}),
+    ...(frame.branches === null ? {} : { branches: frame.branches }),
+    ...(frame.reset ? { compareWith: null, explain: null } : {}),
+    ...(frame.actions === null ? {} : { actions: frame.actions }),
+    ...(frame.jumped && s.pendingSelection !== null
+      ? {
+          selectedRecord: s.pendingSelection.record,
+          selectedProcess: s.pendingSelection.process,
+          pendingSelection: null,
+        }
+      : frame.reset ||
+          (s.selectedRecord !== null &&
+            (s.selectedRecord >= trace.length ||
+              // Records past a truncation are different ones (e.g. another branch's).
+              (frame.truncateAfter !== null && s.selectedRecord > frame.truncateAfter)))
+        ? { selectedRecord: null }
+        : {}),
   }));
 }

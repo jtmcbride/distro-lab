@@ -28,11 +28,15 @@ export {
   type RunnableSimulation,
   type ScheduledAction,
   type SimulationOptions,
+  type SimulationState,
 } from "./simulation.ts";
+export { loadCheckpoint, saveCheckpoint, type Checkpoint } from "./snapshot.ts";
+export { causalPast, networkChangesBefore, omissionCauses, processOf } from "./causality.ts";
 export {
   InvariantMonitor,
   type ClusterSnapshot,
   type Invariant,
+  type MonitorState,
   type NodeSnapshot,
   type Observable,
   type Report,
@@ -50,7 +54,7 @@ export {
   type Scenario,
 } from "./harness/scenario.ts";
 export { generateScenario, type GenerateOptions, type Workload } from "./harness/generate.ts";
-export { minimizeScenario } from "./harness/minimize.ts";
+export { minimizeFailure, minimizeScenario } from "./harness/minimize.ts";
 export {
   fuzz,
   scenarioForSeed,
@@ -70,4 +74,14 @@ export {
   type RequestClientView,
   type RequestClientVolatile,
 } from "./clients/requestClient.ts";
-export { NOTABLE_LABELS, SimulationHost, type Frame, type ProcessState } from "./host/host.ts";
+export {
+  NOTABLE_LABELS,
+  SimulationHost,
+  type BranchInfo,
+  type BranchOutcome,
+  type CheckpointPolicy,
+  type Comparison,
+  type Frame,
+  type ProcessState,
+  type ScenarioAction,
+} from "./host/host.ts";

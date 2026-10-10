@@ -6,6 +6,10 @@ import { RecordDetail } from "./components/RecordDetail.tsx";
 import { SpaceTime } from "./components/SpaceTime.tsx";
 import { Tools } from "./components/Tools.tsx";
 import { PlaybackBar } from "./components/PlaybackBar.tsx";
+import { BranchBar } from "./components/BranchBar.tsx";
+import { ComparePanel } from "./components/ComparePanel.tsx";
+import { Minimize } from "./components/Minimize.tsx";
+import { Explain } from "./components/Explain.tsx";
 import { ScenarioMenu } from "./components/ScenarioMenu.tsx";
 import { Violations } from "./components/Violations.tsx";
 import { useSim } from "./state/store.ts";
@@ -19,7 +23,11 @@ export function App() {
         <ScenarioMenu />
       </header>
       <PlaybackBar />
+      <BranchBar />
+      <ComparePanel />
       <Violations />
+      <Minimize />
+      <Explain />
       {error !== null && <p className="error">Simulation error: {error}</p>}
       <main className="workspace">
         <section className="panel cluster" aria-label="Cluster">

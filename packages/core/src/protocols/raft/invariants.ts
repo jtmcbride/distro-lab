@@ -21,9 +21,13 @@ const describe = (e: RaftLogEntry | undefined) =>
 
 /** §5.2 Election Safety: at most one leader can be elected in a given term. */
 function electionSafety(): Invariant<RaftView> {
-  const leaderOf = new Map<number, NodeId>();
+  let leaderOf = new Map<number, NodeId>();
   return {
     name: "election-safety",
+    save: () => leaderOf,
+    load: (state) => {
+      leaderOf = state as typeof leaderOf;
+    },
     check(s, report) {
       for (const n of s.nodes) {
         // A crashed node's view is stale, but it was checked while it was up.
@@ -40,9 +44,13 @@ function electionSafety(): Invariant<RaftView> {
 
 /** Each node grants at most one vote per term, including across restarts. */
 function singleVotePerTerm(): Invariant<RaftView> {
-  const votes = new Map<string, NodeId>();
+  let votes = new Map<string, NodeId>();
   return {
     name: "single-vote-per-term",
+    save: () => votes,
+    load: (state) => {
+      votes = state as typeof votes;
+    },
     check(s, report) {
       for (const n of s.nodes) {
         if (n.view.votedFor === null) continue;
@@ -62,9 +70,13 @@ function singleVotePerTerm(): Invariant<RaftView> {
 
 /** currentTerm never decreases on any node, including across restarts. */
 function termMonotonic(): Invariant<RaftView> {
-  const last = new Map<NodeId, number>();
+  let last = new Map<NodeId, number>();
   return {
     name: "term-monotonic",
+    save: () => last,
+    load: (state) => {
+      last = state as typeof last;
+    },
     check(s, report) {
       for (const n of s.nodes) {
         const prev = last.get(n.id) ?? 0;
@@ -96,9 +108,13 @@ function candidateVotesForSelf(): Invariant<RaftView> {
  * accepting AppendEntries from a stale or bogus leader.
  */
 function followsRealLeader(): Invariant<RaftView> {
-  const leaderOf = new Map<number, NodeId>();
+  let leaderOf = new Map<number, NodeId>();
   return {
     name: "follows-real-leader",
+    save: () => leaderOf,
+    load: (state) => {
+      leaderOf = state as typeof leaderOf;
+    },
     check(s, report) {
       for (const n of s.nodes) {
         // First leader seen wins; a second one is election-safety's to report.
@@ -137,10 +153,10 @@ interface LogChange {
  * references finds the change point cheaply. Shared by the log invariants of one run.
  */
 function logTracker() {
-  const seen = new Map<NodeId, readonly RaftLogEntry[]>();
+  let seen = new Map<NodeId, readonly RaftLogEntry[]>();
   let last: ClusterSnapshot<RaftView> | undefined;
   let changes = new Map<NodeId, LogChange>();
-  return (s: ClusterSnapshot<RaftView>): ReadonlyMap<NodeId, LogChange> => {
+  const tracker = (s: ClusterSnapshot<RaftView>): ReadonlyMap<NodeId, LogChange> => {
     if (s === last) return changes;
     last = s;
     changes = new Map();
@@ -156,6 +172,17 @@ function logTracker() {
     }
     return changes;
   };
+  /** Holds the tracker's history for snapshots; it checks nothing itself. */
+  const memory: Invariant<RaftView> = {
+    name: "log-tracker",
+    check() {},
+    save: () => seen,
+    load: (state) => {
+      seen = state as typeof seen;
+      last = undefined;
+    },
+  };
+  return Object.assign(tracker, { memory });
 }
 
 type Tracker = ReturnType<typeof logTracker>;
@@ -177,10 +204,17 @@ function entryHash(entry: RaftLogEntry): number {
  * same prefix.
  */
 function logMatching(changes: Tracker): Invariant<RaftView> {
-  const prefixAt = new Map<string, { node: NodeId; fingerprint: number }>();
-  const fingerprints = new Map<NodeId, number[]>();
+  let prefixAt = new Map<string, { node: NodeId; fingerprint: number }>();
+  let fingerprints = new Map<NodeId, number[]>();
   return {
     name: "log-matching",
+    save: () => ({ prefixAt, fingerprints }),
+    load: (state) => {
+      ({ prefixAt, fingerprints } = state as {
+        prefixAt: typeof prefixAt;
+        fingerprints: typeof fingerprints;
+      });
+    },
     check(s, report) {
       const changed = changes(s);
       for (const n of s.nodes) {
@@ -214,11 +248,18 @@ function logMatching(changes: Tracker): Invariant<RaftView> {
  */
 function leaderCompleteness(changes: Tracker): Invariant<RaftView> {
   // committed[i] is the entry first observed committed at index i + 1.
-  const committed: { entry: RaftLogEntry; term: number; node: NodeId }[] = [];
+  let committed: { entry: RaftLogEntry; term: number; node: NodeId }[] = [];
   // Per leadership (node/incarnation/term): committed indices already verified.
-  const verified = new Map<string, number>();
+  let verified = new Map<string, number>();
   return {
     name: "leader-completeness",
+    save: () => ({ committed, verified }),
+    load: (state) => {
+      ({ committed, verified } = state as {
+        committed: typeof committed;
+        verified: typeof verified;
+      });
+    },
     check(s, report) {
       const changed = changes(s);
       for (const n of s.nodes) {
@@ -255,10 +296,17 @@ function leaderCompleteness(changes: Tracker): Invariant<RaftView> {
 
 /** §5.4.3 State Machine Safety: no two servers apply different entries at the same index. */
 function stateMachineSafety(changes: Tracker): Invariant<RaftView> {
-  const applied: { entry: RaftLogEntry; node: NodeId }[] = [];
-  const checkedUpTo = new Map<NodeId, number>();
+  let applied: { entry: RaftLogEntry; node: NodeId }[] = [];
+  let checkedUpTo = new Map<NodeId, number>();
   return {
     name: "state-machine-safety",
+    save: () => ({ applied, checkedUpTo }),
+    load: (state) => {
+      ({ applied, checkedUpTo } = state as {
+        applied: typeof applied;
+        checkedUpTo: typeof checkedUpTo;
+      });
+    },
     check(s, report) {
       const changed = changes(s);
       for (const n of s.nodes) {
@@ -296,9 +344,13 @@ function stateMachineSafety(changes: Tracker): Invariant<RaftView> {
 
 /** lastApplied <= commitIndex <= log length, and commitIndex never decreases within a run. */
 function commitBookkeeping(): Invariant<RaftView> {
-  const highest = new Map<string, number>();
+  let highest = new Map<string, number>();
   return {
     name: "commit-bookkeeping",
+    save: () => highest,
+    load: (state) => {
+      highest = state as typeof highest;
+    },
     check(s, report) {
       for (const n of s.nodes) {
         // A crashed node's view is its last state before the crash, under the new incarnation.
@@ -328,9 +380,13 @@ function commitBookkeeping(): Invariant<RaftView> {
 /** §5.3 Leader Append-Only: a leader never overwrites or deletes entries in its log. */
 function leaderAppendOnly(changes: Tracker): Invariant<RaftView> {
   // Leadership (node/incarnation/term) each node held at the previous check, if any.
-  const leadership = new Map<NodeId, string>();
+  let leadership = new Map<NodeId, string>();
   return {
     name: "leader-append-only",
+    save: () => leadership,
+    load: (state) => {
+      leadership = state as typeof leadership;
+    },
     check(s, report) {
       const changed = changes(s);
       for (const n of s.nodes) {
@@ -373,7 +429,12 @@ function acknowledgedWritesReplicated(): Invariant<RaftView> {
       if (holders.length < majority) {
         report(
           `${r.node} got a reply for request ${seq}, but only ${holders.length} of ${s.nodes.length} servers store it`,
-          [r.node, ...holders.map((h) => h.id)],
+          // Every server's log is part of the claim, not only the holders'.
+          [
+            r.node,
+            ...holders.map((h) => h.id),
+            ...s.nodes.filter((n) => !holders.includes(n)).map((n) => n.id),
+          ],
         );
       }
     },
@@ -405,5 +466,6 @@ export function raftInvariants(): Invariant<RaftView>[] {
     commitBookkeeping(),
     leaderAppendOnly(changes),
     acknowledgedWritesReplicated(),
+    changes.memory,
   ];
 }

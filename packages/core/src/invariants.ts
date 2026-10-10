@@ -39,9 +39,22 @@ export interface Invariant<View> {
    * gives the servers' state at that moment.
    */
   onRecord?(record: TraceRecord, now: () => ClusterSnapshot<View>, report: Report): void;
+  /**
+   * Required for checkers that keep history, so snapshots can restore it. `save` returns
+   * the live history as structured-clonable data; `load` takes ownership of a copy. History
+   * may reference objects from protocol views (snapshots copy both together).
+   */
+  save?(): unknown;
+  load?(state: unknown): void;
 }
 
 export type Report = (message: string, nodes: NodeId[]) => void;
+
+export interface MonitorState {
+  readonly violations: readonly Violation[];
+  readonly seen: Set<string>;
+  readonly invariants: readonly unknown[];
+}
 
 /** Anything the monitor can watch; Simulation satisfies this. */
 export interface Observable {
@@ -62,7 +75,7 @@ export interface Observable {
  */
 export class InvariantMonitor<View> {
   readonly violations: Violation[] = [];
-  private readonly seen = new Set<string>();
+  private seen = new Set<string>();
   private readonly sim: Observable;
   private readonly invariants: readonly Invariant<View>[];
   /** Stop recording after this many violations (the first is usually the interesting one). */
@@ -90,6 +103,21 @@ export class InvariantMonitor<View> {
 
   get first(): Violation | undefined {
     return this.violations[0];
+  }
+
+  /** Live state for snapshots; see `Invariant.save`. */
+  saveState(): MonitorState {
+    return {
+      violations: this.violations,
+      seen: this.seen,
+      invariants: this.invariants.map((inv) => inv.save?.()),
+    };
+  }
+
+  loadState(state: MonitorState): void {
+    this.violations.splice(0, this.violations.length, ...state.violations);
+    this.seen = state.seen;
+    this.invariants.forEach((inv, i) => inv.load?.(state.invariants[i]));
   }
 
   private snapshot(): ClusterSnapshot<View> {
