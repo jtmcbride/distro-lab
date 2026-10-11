@@ -73,6 +73,7 @@ export {
 } from "./harness/fuzz.ts";
 export { defaultRegistry } from "./harness/registry.ts";
 export {
+  ClientHistoryBuilder,
   clientHistory,
   DEFAULT_HISTORY_FORMAT,
   relativeTo,

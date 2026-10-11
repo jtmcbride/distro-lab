@@ -39,6 +39,16 @@ export const SCENARIO_CHOICES: readonly ScenarioChoice[] = [
     make: () => Raft.figure8Scenario("raft-bug-commit-old-terms"),
   },
   {
+    id: "stale-read",
+    label: "Stale read from a deposed leader (correct Raft)",
+    make: () => Raft.staleReadScenario("raft"),
+  },
+  {
+    id: "stale-read-bug",
+    label: "Stale read from a deposed leader (bug: leader answers reads locally)",
+    make: () => Raft.staleReadScenario("raft-bug-leader-local-reads"),
+  },
+  {
     id: "fuzz",
     label: "Random faults (fuzz seed 1)",
     make: () => scenarioForSeed(registry, 1, { protocol: "raft" }),

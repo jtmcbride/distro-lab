@@ -84,3 +84,48 @@ export function figure8Scenario(protocol = "raft"): Scenario {
     durationMs: 1500,
   };
 }
+
+/**
+ * A stale read from a deposed leader. A leads term 1; c1 writes x=1 and c2 reads it through
+ * A. A partition leaves A alone with c2, the majority elects B, and c1 writes x=2 through B.
+ * Then c2 reads x through A, which still believes it leads.
+ *
+ * Correct Raft cannot commit c2's read without a majority, so it completes only after the
+ * heal, through B, and returns 2. With `raft-bug-leader-local-reads`, A answers from its own
+ * state and returns 1, although x=2 was acknowledged before the read began: a stale read
+ * that only the linearizability check sees (no client reads a key it wrote itself).
+ */
+export function staleReadScenario(protocol = "raft-bug-leader-local-reads"): Scenario {
+  const config: Partial<RaftConfig> = {
+    electionTimeoutMinMs: 100_000,
+    electionTimeoutMaxMs: 100_000,
+    heartbeatIntervalMs: 50,
+  };
+  const actions: Step[] = [
+    timeout(10, "A"),
+    at(100, { type: "client", node: "c1", command: { type: "put", key: "x", value: "1" } }),
+    at(200, { type: "client", node: "c2", command: { type: "get", key: "x" } }),
+    net(400, {
+      type: "partition",
+      groups: [
+        ["A", "c2"],
+        ["B", "C", "D", "E", "c1"],
+      ],
+    }),
+    timeout(410, "B"),
+    at(500, { type: "client", node: "c1", command: { type: "put", key: "x", value: "2" } }),
+    at(1500, { type: "client", node: "c2", command: { type: "get", key: "x" } }),
+    net(3000, { type: "heal" }),
+  ];
+  return {
+    version: SCENARIO_VERSION,
+    protocol,
+    seed: 3,
+    nodes: ["A", "B", "C", "D", "E"],
+    clients: ["c1", "c2"],
+    config: config as CanonicalValue,
+    network: { defaults: { latencyMs: 10, jitterMs: 0, loss: 0, duplicate: 0 } },
+    actions,
+    durationMs: 5000,
+  };
+}

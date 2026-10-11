@@ -1,5 +1,6 @@
 import { ClusterView } from "./components/ClusterView.tsx";
 import { EventList } from "./components/EventList.tsx";
+import { HistoryPanel } from "./components/HistoryPanel.tsx";
 import { Inspector } from "./components/Inspector.tsx";
 import { RecordDetail } from "./components/RecordDetail.tsx";
 import { SpaceTime } from "./components/SpaceTime.tsx";
@@ -42,6 +43,10 @@ export function App() {
         <section className="panel logs" aria-label={ui.dataTitle}>
           <h2>{ui.dataTitle}</h2>
           <ui.DataPanel />
+        </section>
+        <section className="panel history-panel" aria-label="Client history">
+          <h2>Client history</h2>
+          <HistoryPanel />
         </section>
         <section className="panel tools" aria-label="Fault and client tools">
           <h2>Tools</h2>

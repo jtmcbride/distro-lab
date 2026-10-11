@@ -246,6 +246,7 @@ button.primary {
     "cluster tools"
     "diagram diagram"
     "logs logs"
+    "history history"
     "timeline timeline";
   gap: 12px;
 }
@@ -259,6 +260,7 @@ button.primary {
       "tools"
       "diagram"
       "logs"
+      "history"
       "timeline";
   }
 }
@@ -1171,4 +1173,157 @@ table.replica-grid {
   border-style: dashed;
   border-color: var(--warn);
   background: transparent;
+}
+
+.history-panel {
+  grid-area: history;
+}
+
+.history-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 14px;
+  font-size: 0.8rem;
+  margin-bottom: 8px;
+}
+
+.history-legend {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+}
+
+.history-legend .swatch {
+  display: inline-block;
+  width: 14px;
+  height: 10px;
+  border-radius: 3px;
+  margin-left: 6px;
+  border: 2px solid var(--op-border, var(--border));
+  background: var(--op-bg, var(--panel-2));
+}
+
+.history-lanes {
+  display: grid;
+  gap: 4px;
+}
+
+.history-lane {
+  display: grid;
+  grid-template-columns: 3em minmax(0, 1fr);
+  align-items: center;
+  gap: 6px;
+}
+
+.history-client {
+  font-size: 0.8rem;
+  font-family: ui-monospace, monospace;
+  color: var(--muted);
+}
+
+.history-track {
+  position: relative;
+  height: 24px;
+  background: var(--panel-2);
+  border-radius: 4px;
+}
+
+.history-now {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 0;
+  border-left: 1px dashed var(--muted);
+}
+
+/* A button spans the free slot up to the client's next operation; the bar inside it is the
+   operation's duration and the label may run past it. */
+.history-op {
+  --op-bg: color-mix(in srgb, var(--msg-client) 22%, var(--panel));
+  --op-border: var(--msg-client);
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  min-width: 6px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--fg);
+  font: inherit;
+  font-size: 0.72rem;
+  line-height: 1;
+  text-align: left;
+  cursor: pointer;
+}
+
+.history-op .bar {
+  position: absolute;
+  inset: 0 auto 0 0;
+  min-width: 6px;
+  border-radius: 4px;
+  border: 1.5px solid var(--op-border);
+  background: var(--op-bg);
+}
+
+.history-op .text {
+  position: relative;
+  display: block;
+  padding: 0 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.history-op.pending .bar {
+  border-style: dashed;
+  --op-bg: transparent;
+}
+
+.history-op.not-ok {
+  --op-border: var(--warn);
+}
+
+.history-op.selected .bar {
+  outline: 2px solid var(--fg);
+  outline-offset: 1px;
+}
+
+.history-op.selected {
+  z-index: 1;
+}
+
+.history-op:focus-visible {
+  outline: 2px solid var(--accent);
+}
+
+.history-op.failing,
+.history-legend .swatch.failing {
+  --op-bg: color-mix(in srgb, var(--bad) 28%, var(--panel));
+  --op-border: var(--bad);
+}
+
+.history-op.before,
+.history-legend .swatch.before {
+  --op-bg: color-mix(in srgb, var(--accent) 22%, var(--panel));
+  --op-border: var(--accent);
+}
+
+.history-op.overlapping,
+.history-legend .swatch.overlapping {
+  --op-bg: color-mix(in srgb, var(--warn) 18%, var(--panel));
+  --op-border: var(--warn);
+}
+
+.history-axis {
+  display: flex;
+  justify-content: space-between;
+  margin-left: calc(3em + 6px);
+  font-size: 0.72rem;
+}
+
+.history-detail {
+  margin: 8px 0 0;
+  font-size: 0.8rem;
 }

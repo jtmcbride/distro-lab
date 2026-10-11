@@ -4,7 +4,7 @@ import { raftInvariants } from "./invariants.ts";
 import { raft } from "./raft.ts";
 import { requestClient, type RequestClientView } from "../../clients/requestClient.ts";
 import { clientChains, raftKvWorkload } from "./workload.ts";
-import { figure8Scenario } from "./scenarios.ts";
+import { figure8Scenario, staleReadScenario } from "./scenarios.ts";
 import { describeKvOp, describeKvResult, linearizableKv, type KvOp, type KvResult } from "./kv.ts";
 import type { RaftConfig, RaftMessage, RaftView } from "./types.ts";
 
@@ -73,7 +73,7 @@ export function raftEntries(): ProtocolEntry[] {
         maxEntriesPerAppend: rng.pick([1, 2, 4, 64]),
         fastBackoff: rng.chance(0.5),
       }),
-      examples: { figure8: figure8Scenario },
+      examples: { figure8: figure8Scenario, "stale-read": staleReadScenario },
       workload: raftKvWorkload,
       liveness: (sim, view) => [
         ...converged(sim.nodeIds, view, (n) => sim.isUp(n)),

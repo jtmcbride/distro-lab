@@ -1,7 +1,10 @@
 import fc from "fast-check";
 import { describe, expect, it } from "vitest";
 import {
+  clientHistory,
   canonicalJson,
+  defaultRegistry,
+  runScenario,
   LinearizabilityChecker,
   Raft,
   type Model,
@@ -285,5 +288,29 @@ describe("linearizableKv invariant", () => {
         ["C2"],
       ],
     ]);
+  });
+});
+
+describe("stale-read example", () => {
+  const registry = defaultRegistry();
+  const reads = (protocol: string) => {
+    const r = runScenario(registry, Raft.staleReadScenario(protocol), { keepTrace: true });
+    const ops = clientHistory(r.trace!);
+    return { r, last: ops.filter((op) => op.client === "c2").at(-1)! };
+  };
+
+  it("correct Raft serves the read only after the heal, with the latest value", () => {
+    const { r, last } = reads("raft");
+    expect(r.violations).toEqual([]);
+    expect(r.liveness).toEqual([]);
+    expect(last.output).toEqual({ ok: true, value: "2" });
+    expect(last.completedAt).toBeGreaterThan(3000);
+  });
+
+  it("a deposed leader answering locally returns the old value, caught only by linearizability", () => {
+    const { r, last } = reads("raft-bug-leader-local-reads");
+    expect(last.output).toEqual({ ok: true, value: "1" });
+    expect(r.violations.map((v) => v.invariant)).toEqual(["linearizable"]);
+    expect(r.violations[0]!.recordId).toBe(last.completeRecord);
   });
 });

@@ -69,6 +69,10 @@ Bottom up:
   `ClusterSnapshot` (servers only, with `up` and `incarnation`); optional `onRecord` sees trace
   records mid-step (client-visible events). A checker that keeps history must implement
   `save`/`load` so checkpoints can restore it.
+- **Linearizability** (`linearizability.ts`): an online checker that keeps every configuration
+  the history so far can be in (model state plus which pending operations are linearized,
+  with their outputs) per partition, and the `linearizable` invariant over client
+  `invoke`/`complete` annotations. `harness/history.ts` extracts histories for the CLI and UI.
 - **Clients** (`clients/requestClient.ts`): clients are simulated processes on the network.
   One request outstanding, redirects, retries on timeout or `unavailable`, durable seq;
   `invoke`/`complete` annotations form the client-visible history. Optional hooks rewrite an
@@ -90,7 +94,7 @@ Bottom up:
   omission (the crash or link cut that dropped a message in the past).
 - **Raft** (`protocols/raft/`): `raft.ts` (election, replication, no-op on election,
   current-term commit, KV apply with a session table), `invariants.ts`, `workload.ts` (KV client
-  ops and the `client-chains` check), `scenarios.ts` (scripted Figure 8), `registry.ts` (`raft`
+  ops and the `client-chains` check), `scenarios.ts` (scripted Figure 8 and a stale read from a deposed leader), `registry.ts` (`raft`
   plus a `raft-bug-<name>` entry per planted bug).
 - **Dynamo** (`protocols/dynamo/`): leaderless store. `ring.ts` (preference lists from server
   ids, not the seed), `clock.ts` (dotted versions with exact causal contexts: a version vector
@@ -128,7 +132,8 @@ behavior lives in core.
 - Protocol-specific presentation lives behind the `ProtocolUi` interface in `src/protocols/`
   (`raft.tsx`, `dynamo.tsx`; `uiFor` picks one by protocol-name prefix): badges, message
   colors, timer ring and buttons, server inspector, data panel (`LogGrid` / `ReplicaGrid`),
-  client form, op descriptions. Components get it from `useProtocolUi()`. A new protocol needs
+  client form, op descriptions. `HistoryPanel` shows client histories and linearizability
+  violations for any protocol. Components get it from `useProtocolUi()`. A new protocol needs
   one of these plus entries in `scenarios.ts` (scenario menu).
 - Unit tests are `src/**/*.test.ts` (vitest); Playwright specs are in `e2e/`.
 

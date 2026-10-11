@@ -34,18 +34,20 @@ export const DEFAULT_HISTORY_FORMAT: HistoryFormat = {
   describeOutput: (output) => JSON.stringify(output),
 };
 
-/** The client-visible history in a trace, in invocation order. */
-export function clientHistory(records: Iterable<TraceRecord>): HistoryOp[] {
-  const ops: HistoryOp[] = [];
-  const byId = new Map<string, number>();
-  for (const r of records) {
-    if (r.type !== "annotate") continue;
+/** Builds the client-visible history from trace records as they arrive. */
+export class ClientHistoryBuilder {
+  /** In invocation order. */
+  readonly ops: HistoryOp[] = [];
+  private readonly byId = new Map<string, number>();
+
+  add(r: TraceRecord): void {
+    if (r.type !== "annotate") return;
     const data = r.data as { seq?: number; op?: CanonicalValue; result?: CanonicalValue } | null;
-    if (typeof data?.seq !== "number") continue;
+    if (typeof data?.seq !== "number") return;
     const id = `${r.node}#${data.seq}`;
     if (r.label === "invoke" && data.op !== undefined) {
-      byId.set(id, ops.length);
-      ops.push({
+      this.byId.set(id, this.ops.length);
+      this.ops.push({
         id,
         client: r.node,
         seq: data.seq,
@@ -57,12 +59,23 @@ export function clientHistory(records: Iterable<TraceRecord>): HistoryOp[] {
         completeRecord: null,
       });
     } else if (r.label === "complete" && data.result !== undefined) {
-      const i = byId.get(id);
-      if (i === undefined) continue;
-      ops[i] = { ...ops[i]!, output: data.result, completedAt: r.t, completeRecord: r.id };
+      const i = this.byId.get(id);
+      if (i === undefined) return;
+      this.ops[i] = {
+        ...this.ops[i]!,
+        output: data.result,
+        completedAt: r.t,
+        completeRecord: r.id,
+      };
     }
   }
-  return ops;
+}
+
+/** The client-visible history in a trace, in invocation order. */
+export function clientHistory(records: Iterable<TraceRecord>): HistoryOp[] {
+  const builder = new ClientHistoryBuilder();
+  for (const r of records) builder.add(r);
+  return builder.ops;
 }
 
 /**
