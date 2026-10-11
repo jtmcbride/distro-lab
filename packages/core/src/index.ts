@@ -43,7 +43,9 @@ export {
   type Violation,
 } from "./invariants.ts";
 export {
+  linearizable,
   LinearizabilityChecker,
+  type LinearizableOptions,
   type LinearizabilityFailure,
   type LinearizabilityState,
   type Model,

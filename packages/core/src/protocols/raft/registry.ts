@@ -5,7 +5,7 @@ import { raft } from "./raft.ts";
 import { requestClient, type RequestClientView } from "../../clients/requestClient.ts";
 import { clientChains, raftKvWorkload } from "./workload.ts";
 import { figure8Scenario } from "./scenarios.ts";
-import type { KvOp, KvResult } from "./kv.ts";
+import { linearizableKv, type KvOp, type KvResult } from "./kv.ts";
 import type { RaftConfig, RaftMessage, RaftView } from "./types.ts";
 
 /**
@@ -60,7 +60,7 @@ export function raftEntries(): ProtocolEntry[] {
       description,
       create: (config) => create((config ?? {}) as Partial<RaftConfig>),
       client: () => requestClient<KvOp, KvResult, RaftMessage>(),
-      invariants: () => [...raftInvariants(), clientChains()],
+      invariants: () => [...raftInvariants(), clientChains(), linearizableKv()],
       formatView: formatRaftView,
       // Small batches make old-term entries travel without the new leader's no-op, which is
       // what Figure 8 needs; both backoff modes get exercised.

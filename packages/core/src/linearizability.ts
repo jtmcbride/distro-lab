@@ -1,4 +1,5 @@
 import { canonicalJson, type CanonicalValue } from "./canonical.ts";
+import type { Invariant } from "./invariants.ts";
 
 /**
  * A sequential specification. `step` is deterministic and must not mutate `state`.
@@ -154,4 +155,52 @@ function dedupe<State>(configs: Config<State>[]): Config<State>[] {
   const seen = new Map<string, Config<State>>();
   for (const c of configs) seen.set(configKey(c), c);
   return [...seen.values()];
+}
+
+export interface LinearizableOptions<Input, Output> {
+  /** Invariant name (default "linearizable"). */
+  readonly name?: string;
+  /** e.g. `put x="1"`. */
+  readonly describeInput: (input: Input) => string;
+  /** e.g. `"1"`. */
+  readonly describeOutput: (output: Output) => string;
+}
+
+/**
+ * Checks that the client-visible history is linearizable with respect to `model`. The history
+ * is the clients' `invoke {seq, op}` and `complete {seq, result}` annotations; an operation is
+ * identified by `(client, seq)`, so all retries of a request are one operation. Reported at
+ * the `complete` that no linearization can explain.
+ */
+export function linearizable<State extends CanonicalValue, Input, Output extends CanonicalValue>(
+  model: Model<State, Input, Output>,
+  options: LinearizableOptions<Input, Output>,
+): Invariant<unknown> {
+  let checker = new LinearizabilityChecker(model);
+  return {
+    name: options.name ?? "linearizable",
+    save: () => checker.save(),
+    load(state) {
+      checker = new LinearizabilityChecker(model);
+      checker.load(state as LinearizabilityState);
+    },
+    check() {},
+    onRecord(r, _now, report) {
+      if (r.type !== "annotate") return;
+      const data = r.data as { seq?: number; op?: Input; result?: Output } | undefined;
+      if (data?.seq === undefined) return;
+      const id = `${r.node}#${data.seq}`;
+      if (r.label === "invoke" && data.op !== undefined) {
+        checker.invoke(id, data.op);
+      } else if (r.label === "complete" && data.result !== undefined) {
+        const failure = checker.complete(id, data.result);
+        if (failure === null) return;
+        const could = failure.possible.map(options.describeOutput).join(" or ");
+        report(
+          `${id} ${options.describeInput(failure.input)} returned ${options.describeOutput(failure.output)}, but no linearization of the history allows that; it could only have returned ${could}`,
+          [r.node],
+        );
+      }
+    },
+  };
 }

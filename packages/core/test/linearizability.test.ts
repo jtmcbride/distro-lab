@@ -1,6 +1,12 @@
 import fc from "fast-check";
 import { describe, expect, it } from "vitest";
-import { canonicalJson, LinearizabilityChecker, type Model } from "../src/index.ts";
+import {
+  canonicalJson,
+  LinearizabilityChecker,
+  Raft,
+  type Model,
+  type TraceRecord,
+} from "../src/index.ts";
 
 /** Registers on a few keys: get, put, and cas (a failed cas returns the current value). */
 type Op =
@@ -253,5 +259,31 @@ describe("LinearizabilityChecker", () => {
       }),
       { numRuns: 1000 },
     );
+  });
+});
+
+describe("linearizableKv invariant", () => {
+  it("reads the history from client annotations and explains a stale read", () => {
+    const inv = Raft.linearizableKv();
+    const reports: [string, string[]][] = [];
+    let id = 0;
+    const annotate = (node: string, label: string, data: object) =>
+      inv.onRecord!(
+        { id: id++, t: id, cause: null, type: "annotate", node, label, data } as TraceRecord,
+        () => ({ t: 0, recordId: 0, nodes: [] }),
+        (message, nodes) => reports.push([message, nodes]),
+      );
+    annotate("C1", "invoke", { seq: 1, op: { type: "put", key: "k", value: "a" } });
+    annotate("C1", "retry", { seq: 1, server: "B" });
+    annotate("C1", "complete", { seq: 1, result: { ok: true, value: "a" } });
+    annotate("C2", "invoke", { seq: 1, op: { type: "get", key: "k" } });
+    expect(reports).toEqual([]);
+    annotate("C2", "complete", { seq: 1, result: { ok: true, value: null } });
+    expect(reports).toEqual([
+      [
+        'C2#1 get k returned null, but no linearization of the history allows that; it could only have returned "a"',
+        ["C2"],
+      ],
+    ]);
   });
 });

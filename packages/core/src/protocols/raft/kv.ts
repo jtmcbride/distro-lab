@@ -1,3 +1,4 @@
+import { linearizable, type Model } from "../../linearizability.ts";
 import type { NodeId } from "../../protocol.ts";
 
 /** Operations clients can run against the replicated store. Values are strings. */
@@ -68,3 +69,33 @@ export function applyClientCommand(
   kv.sessions[clientId] = { seq, result };
   return result;
 }
+
+/** The store as a sequential specification, one register per key. */
+export const kvModel: Model<string | null, KvOp, KvResult> = {
+  init: () => null,
+  partition: (op) => op.key,
+  step(state, op) {
+    const data: Record<string, string> = state === null ? {} : { [op.key]: state };
+    const output = executeKv(data, op);
+    return { state: data[op.key] ?? null, output };
+  },
+};
+
+export function describeKvOp(op: KvOp): string {
+  switch (op.type) {
+    case "get":
+      return `get ${op.key}`;
+    case "put":
+      return `put ${op.key}=${JSON.stringify(op.value)}`;
+    case "cas":
+      return `cas ${op.key} ${JSON.stringify(op.expect)}->${JSON.stringify(op.value)}`;
+  }
+}
+
+export function describeKvResult(r: KvResult): string {
+  return r.ok ? JSON.stringify(r.value) : `failed (found ${JSON.stringify(r.value)})`;
+}
+
+/** The Raft store promises linearizability for every operation. */
+export const linearizableKv = () =>
+  linearizable(kvModel, { describeInput: describeKvOp, describeOutput: describeKvResult });
