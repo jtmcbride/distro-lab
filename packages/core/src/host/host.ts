@@ -12,6 +12,8 @@ export interface ProcessState {
   readonly up: boolean;
   readonly view: CanonicalValue;
   readonly timers: readonly { readonly key: string; readonly at: number }[];
+  /** The process's local clock: its reading now and the rate it runs at. */
+  readonly clock: { readonly now: number; readonly rate: number };
 }
 
 /** What the UI receives: everything that changed since the previous frame. */
@@ -666,6 +668,7 @@ export class SimulationHost {
         up: this.sim.isUp(id),
         view: this.sim.view(id),
         timers: this.sim.timers(id),
+        clock: this.sim.localClock(id),
       })),
       network: this.sim.networkView(),
       playing: this.playing,

@@ -345,7 +345,7 @@ Design decisions:
 | 3   | Leader leases with drift-aware expiry; followers' vote check                                                             | 10k seeds linearizable with drift inside the bound                                   | done   |
 | 4   | Generator: clock rates and rate changes; planted bugs (lease ignoring drift, ReadIndex without the heartbeat round, ...) | Each caught by a checker and minimized: by fuzzing, or by a scripted race            | done   |
 | 5   | Metrics: read latency and log entries per read for each mode, in the CLI                                                 | `lease` answers in one client round trip; `readIndex` and `lease` add no log entries | done   |
-| 6   | UI: local clocks and lease state in the inspector, read mode and clock tools, lease-vs-drift example and tutorial        | The tutorial's claims pass `tours.test.ts`                                           | todo   |
+| 6   | UI: local clocks and lease state in the inspector, read mode and clock tools, lease-vs-drift example and tutorial        | The tutorial's claims pass `tours.test.ts`                                           | done   |
 | 7   | Hardening: e2e, docs, results                                                                                            | CI green                                                                             | todo   |
 
 Out of scope: clock offsets and jumps, lease handoff, follower reads, slow processing (GC

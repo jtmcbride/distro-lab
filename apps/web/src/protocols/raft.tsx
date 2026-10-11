@@ -1,6 +1,7 @@
 import { useState } from "react";
-import type { CanonicalValue, ProcessState, Raft } from "@distro-lab/core";
+import { Raft, type CanonicalValue, type ProcessState } from "@distro-lab/core";
 import { LogGrid } from "../components/LogGrid.tsx";
+import { formatMs } from "../components/PlaybackBar.tsx";
 import { sim } from "../sim/client.ts";
 import { useSim } from "../state/store.ts";
 import { Field, Timers } from "./common.tsx";
@@ -28,6 +29,36 @@ function messageStyle(message: CanonicalValue): MessageStyle {
   };
 }
 
+/** How this server answers reads, and (leaders) its lease and waiting reads. */
+function Reads({ p }: { p: ProcessState }) {
+  const config = useSim((s) => s.config) as Partial<Raft.RaftConfig> | undefined;
+  const v = p.view as Raft.RaftView;
+  const mode = config?.readMode ?? Raft.DEFAULT_RAFT_CONFIG.readMode;
+  const drift = config?.maxDriftPpm ?? Raft.DEFAULT_RAFT_CONFIG.maxDriftPpm;
+  const leader = p.up && v.role === "leader";
+  const left = v.leaseUntil === null ? null : v.leaseUntil - p.clock.now;
+  return (
+    <>
+      <Field label="Reads">
+        {mode === "log" ? "through the log" : mode === "readIndex" ? "ReadIndex" : "leases"}
+        {mode === "lease" && (
+          <span className="muted"> · assumes clocks within {drift / 10_000}%</span>
+        )}
+      </Field>
+      {leader && mode === "lease" && (
+        <Field label="Lease">
+          {left !== null && left > 0 ? (
+            <span className="good">{formatMs(left)} left on its clock</span>
+          ) : (
+            <span className="muted">expired: reads need a heartbeat round</span>
+          )}
+        </Field>
+      )}
+      {leader && mode !== "log" && <Field label="Pending reads">{v.pendingReads}</Field>}
+    </>
+  );
+}
+
 function RaftServer({ p, now }: { p: ProcessState; now: number }) {
   const v = p.view as Raft.RaftView;
   const data = Object.entries(v.data).sort(([a], [b]) => a.localeCompare(b));
@@ -52,6 +83,7 @@ function RaftServer({ p, now }: { p: ProcessState; now: number }) {
         <Field label="Timers">
           <Timers p={p} now={now} />
         </Field>
+        <Reads p={p} />
       </dl>
       <h3>Key-value data</h3>
       {data.length === 0 ? (

@@ -49,6 +49,16 @@ export const SCENARIO_CHOICES: readonly ScenarioChoice[] = [
     make: () => Raft.staleReadScenario("raft-bug-leader-local-reads"),
   },
   {
+    id: "lease-drift",
+    label: "Lease outlives its leader (leader's clock at 0.2×)",
+    make: () => Raft.leaseDriftScenario("raft", 0.2),
+  },
+  {
+    id: "lease-safe",
+    label: "Leases with clocks inside the bound (leader's clock at 0.95×)",
+    make: () => Raft.leaseDriftScenario("raft", 0.95),
+  },
+  {
     id: "fuzz",
     label: "Random faults (fuzz seed 1)",
     make: () => scenarioForSeed(registry, 1, { protocol: "raft" }),

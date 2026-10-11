@@ -171,6 +171,61 @@ export const TOURS: readonly Tour[] = [
     ],
   },
   {
+    id: "leases",
+    title: "Leases and clocks",
+    summary: "Reads without a round trip, and what they assume about time.",
+    scenario: "lease-drift",
+    steps: [
+      {
+        title: "A read without a round trip",
+        body: [
+          "A leads term 1 and serves reads with a lease. Every heartbeat round a majority answers gives it a lease measured on its own clock: followers that answered will not vote for anyone else until a minimum election timeout has passed on theirs.",
+          "So c2's read took a single round trip to A (20 ms), with no log entry and no heartbeat round. Select A to see its lease.",
+        ],
+        atMs: 250,
+        panel: "inspector",
+        select: "A",
+      },
+      {
+        title: "A's clock runs slow",
+        body: [
+          "The lease's length assumes clocks drift by at most 5%, so A shortens it to stay safe. But A's clock runs at 0.2×: 400 ms in, it reads 80 ms. Everything A measures, its lease included, now lasts five times longer in real time.",
+          "At 400 ms a partition leaves A alone with c2.",
+        ],
+        atMs: 401,
+        panel: "inspector",
+        select: "A",
+      },
+      {
+        title: "A new leader, while A's lease still runs",
+        body: [
+          "The other four stopped hearing from A. Once their minimum election timeout passed on their own clocks, they elected E for term 2 at 532 ms.",
+          "A never heard about term 2, and by its slow clock the lease from its last answered round still has over 80 ms to run.",
+        ],
+        atMs: 540,
+        panel: "cluster",
+        select: "A",
+      },
+      {
+        title: "x = 2 is acknowledged",
+        body: [
+          "c1's put went to A first, timed out, was retried through the majority, and committed in E's term at 890 ms. Any read that starts after this must return 2.",
+        ],
+        atMs: 900,
+        panel: "history",
+      },
+      {
+        title: "A answers from its lease with 1",
+        body: [
+          "c2 read x through A at 900 ms. When the request arrived, A's clock said its lease had about 10 ms left, so A answered from its own state without a round: x = 1. The linearizability check reports the stale read.",
+          "Nothing in A's code is wrong: the lease was correct for the assumption, and the assumption was false. Load “Leases with clocks inside the bound” to see the same script with A's clock at 0.95×: the lease expires in time, the read waits for a heartbeat round A cannot complete, and it returns 2 after the partition heals.",
+        ],
+        atMs: 920,
+        panel: "history",
+      },
+    ],
+  },
+  {
     id: "siblings",
     title: "Dynamo: concurrent writes become siblings",
     summary: "Version vectors keep both writes until a client merges them.",

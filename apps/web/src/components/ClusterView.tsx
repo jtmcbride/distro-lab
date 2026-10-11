@@ -217,7 +217,8 @@ export function ClusterView() {
           const remaining =
             election === undefined || timer === null
               ? 0
-              : Math.max(0, Math.min(1, (election.at - now) / timer.maxMs));
+              : // Timeouts are in the node's local time, which may run fast or slow.
+                Math.max(0, Math.min(1, ((election.at - now) * p.clock.rate) / timer.maxMs));
           const ring = 2 * Math.PI * (NODE_R + 5);
           return (
             <g
@@ -237,6 +238,7 @@ export function ClusterView() {
                 >
                   <title>
                     {election.key} timer fires in {(election.at - now).toFixed(0)} ms
+                    {p.clock.rate === 1 ? "" : ` (its clock runs at ${p.clock.rate}×)`}
                   </title>
                 </circle>
               )}

@@ -1,5 +1,7 @@
+import { useState } from "react";
 import type { ProcessState } from "@distro-lab/core";
 import { Field, useProtocolUi } from "../protocols/index.ts";
+import { sim } from "../sim/client.ts";
 import { useSim } from "../state/store.ts";
 import { trace } from "../state/trace.ts";
 import { formatMs } from "./PlaybackBar.tsx";
@@ -104,6 +106,46 @@ function Summary() {
   );
 }
 
+/**
+ * A process's local clock, and a control to change its rate (recorded in the scenario as a
+ * `clock` action, so a session with clock changes replays exactly).
+ */
+function Clock({ p }: { p: ProcessState }) {
+  const [rate, setRate] = useState(String(p.clock.rate));
+  const parsed = Number(rate);
+  const valid = rate !== "" && Number.isFinite(parsed) && parsed > 0;
+  return (
+    <dl className="fields clock-fields">
+      <Field label="Local clock">
+        {formatMs(p.clock.now)}
+        <span className={p.clock.rate === 1 ? "muted" : "warn"}> · runs at {p.clock.rate}×</span>
+      </Field>
+      <Field label="Clock rate">
+        <form
+          className="clock-form"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (valid && parsed !== p.clock.rate)
+              sim.act({ type: "clock", node: p.id, rate: parsed });
+          }}
+        >
+          <input
+            type="number"
+            min="0.05"
+            step="0.05"
+            value={rate}
+            onChange={(e) => setRate(e.target.value)}
+            aria-label={`Clock rate of ${p.id}`}
+          />
+          <button type="submit" disabled={!valid || parsed === p.clock.rate}>
+            Set
+          </button>
+        </form>
+      </Field>
+    </dl>
+  );
+}
+
 export function Inspector() {
   const { processes, selectedProcess, now } = useSim();
   const ui = useProtocolUi();
@@ -116,6 +158,7 @@ export function Inspector() {
         {p.role === "server" ? "Server" : "Client"} {p.id}
       </h3>
       {p.role === "client" ? <Client p={p} /> : <ui.ServerDetail p={p} now={now} />}
+      <Clock key={`${p.id}-${p.clock.rate}`} p={p} />
     </div>
   );
 }

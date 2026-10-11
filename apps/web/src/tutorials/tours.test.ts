@@ -13,6 +13,9 @@ import { TOURS } from "./tours.ts";
 interface At {
   up(node: string): boolean;
   raft(node: string): Raft.RaftView;
+  /** A process's local clock reading and rate. */
+  clock(node: string): number;
+  rate(node: string): number;
   dynamo(node: string): Dynamo.DynamoView;
   /** Completed or pending operations of `client`, in order. */
   ops(client: string): HistoryOp[];
@@ -92,6 +95,37 @@ const CLAIMS: Record<string, ((at: At) => void)[]> = {
     },
     (at) => expect(at.violations[0]?.message).toContain('could only have returned "2"'),
   ],
+  leases: [
+    (at) => {
+      expect(at.raft("A")).toMatchObject({ role: "leader", term: 1 });
+      expect(at.raft("A").leaseUntil).toBeGreaterThan(at.clock("A"));
+      const read = at.ops("c2")[0]!;
+      expect(read.completedAt! - read.invokedAt).toBe(20);
+      expect(at.records.find((r) => r.label === "readServed")?.data).toMatchObject({ by: "lease" });
+      expect(at.raft("A").log.filter((e) => e.command.kind === "client")).toHaveLength(1);
+    },
+    (at) => {
+      expect(Math.round(at.clock("A"))).toBe(80);
+      expect(at.rate("A")).toBe(0.2);
+    },
+    (at) => {
+      expect(at.raft("E")).toMatchObject({ role: "leader", term: 2 });
+      expect(at.raft("A")).toMatchObject({ role: "leader", term: 1 });
+      expect(at.raft("A").leaseUntil! - at.clock("A")).toBeGreaterThan(80);
+    },
+    (at) => {
+      expect(at.ops("c1")[1]).toMatchObject({ completedAt: 890, output: { value: "2" } });
+      expect(at.raft("E").log.at(-1)?.term).toBe(2);
+    },
+    (at) => {
+      expect(at.ops("c2")[1]!.output).toMatchObject({ value: "1" });
+      expect(at.violations.map((v) => v.invariant)).toEqual(["linearizable"]);
+      // The read arrived at 910ms, when A's clock read 0.2 * 910 = 182ms.
+      const served = at.records.filter((r) => r.label === "readServed").at(-1)!;
+      expect(served).toMatchObject({ node: "A", data: { by: "lease", seq: 2 } });
+      expect(at.raft("A").leaseUntil! - 182).toBeCloseTo(9.7, 1);
+    },
+  ],
   siblings: [
     (at) => {
       const holders = SERVERS.filter((n) => versions(at.dynamo(n), "cart").length > 0);
@@ -168,6 +202,8 @@ describe("tours", () => {
         const at: At = {
           up: (n) => sim.isUp(n),
           raft: (n) => sim.view(n) as unknown as Raft.RaftView,
+          clock: (n) => sim.localClock(n).now,
+          rate: (n) => sim.localClock(n).rate,
           dynamo: (n) => sim.view(n) as unknown as Dynamo.DynamoView,
           ops: (c) => history.ops.filter((op) => op.client === c),
           violations: monitor.violations,
