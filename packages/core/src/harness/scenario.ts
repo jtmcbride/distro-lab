@@ -49,6 +49,8 @@ export interface ProtocolEntry {
   readonly workload?: Workload;
   /** Random protocol settings for generated scenarios, to widen what fuzzing explores. */
   readonly randomConfig?: (rng: Rng) => CanonicalValue;
+  /** Clock drift (ppm) the protocol assumes under a config; generated clocks stay within it. */
+  readonly clockDriftPpm?: (config: CanonicalValue | undefined) => number;
   /** Fault-free time at the end of generated scenarios, if the generator's default is too short. */
   readonly stabilizeMs?: number;
   /** One-line summary of a server's view for CLI output; defaults to its JSON. */
@@ -57,6 +59,8 @@ export interface ProtocolEntry {
   readonly examples?: Readonly<Record<string, (protocol: string) => Scenario>>;
   /** How client operations are grouped and printed; defaults to by `key`, as JSON. */
   readonly history?: HistoryFormat;
+  /** Protocol-specific counters over a run's final server views (e.g. log entries). */
+  readonly metrics?: (views: readonly CanonicalValue[]) => Record<string, number>;
   /** Builds a simulation for the scenario with its invariants attached. */
   build(
     scenario: Scenario,
@@ -86,22 +90,28 @@ export function defineProtocol<P, V, M, C, View, CP = never, CV = never>(spec: {
   ) => string[];
   workload?: Workload;
   randomConfig?: (rng: Rng) => CanonicalValue;
+  clockDriftPpm?: (config: CanonicalValue | undefined) => number;
   stabilizeMs?: number;
   formatView?: (view: View) => string;
   examples?: Readonly<Record<string, (protocol: string) => Scenario>>;
   history?: HistoryFormat;
+  metrics?: (views: readonly View[]) => Record<string, number>;
 }): ProtocolEntry {
   return {
     name: spec.name,
     description: spec.description,
     ...(spec.workload === undefined ? {} : { workload: spec.workload }),
     ...(spec.randomConfig === undefined ? {} : { randomConfig: spec.randomConfig }),
+    ...(spec.clockDriftPpm === undefined ? {} : { clockDriftPpm: spec.clockDriftPpm }),
     ...(spec.stabilizeMs === undefined ? {} : { stabilizeMs: spec.stabilizeMs }),
     ...(spec.formatView === undefined
       ? {}
       : { formatView: spec.formatView as (view: CanonicalValue) => string }),
     ...(spec.examples === undefined ? {} : { examples: spec.examples }),
     ...(spec.history === undefined ? {} : { history: spec.history }),
+    ...(spec.metrics === undefined
+      ? {}
+      : { metrics: spec.metrics as (views: readonly CanonicalValue[]) => Record<string, number> }),
     build(scenario, options) {
       const clients = scenario.clients ?? [];
       if (clients.length > 0 && spec.client === undefined) {

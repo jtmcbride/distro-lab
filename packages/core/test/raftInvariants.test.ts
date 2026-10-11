@@ -21,6 +21,8 @@ const base: View = {
   log: [],
   data: {},
   sessions: {},
+  pendingReads: 0,
+  leaseUntil: null,
 };
 
 type NodeState = Partial<View> & { up?: boolean; incarnation?: number };

@@ -24,6 +24,7 @@ export function scenarioForSeed(
     ...options,
     workload: entry.workload,
     randomConfig: entry.randomConfig,
+    clockDriftPpm: entry.clockDriftPpm,
   });
 }
 

@@ -57,11 +57,11 @@ describe("causalPast", () => {
   const BUGS: [string, number][] = [
     ["double-vote", 0],
     ["volatile-vote", 16],
-    ["stale-votes", 461],
+    ["stale-votes", 265],
     ["truncate-always", 0],
-    ["trust-received", 0],
+    ["trust-received", 39],
     ["no-sessions", 3],
-    ["lost-append", 4],
+    ["lost-append", 3],
   ];
   for (const [bug, seed] of BUGS) {
     it(`contains the faults that trigger "${bug}"`, () => {

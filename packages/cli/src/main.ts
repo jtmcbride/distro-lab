@@ -4,6 +4,8 @@ import { join } from "node:path";
 import { parseArgs } from "node:util";
 import {
   clientHistory,
+  failed,
+  operationStats,
   DEFAULT_HISTORY_FORMAT,
   defaultRegistry,
   formatRecord,
@@ -11,6 +13,7 @@ import {
   fuzz,
   runScenario,
   scenarioForSeed,
+  type CanonicalValue,
   type HistoryFormat,
   type RunResult,
   type Scenario,
@@ -30,6 +33,10 @@ Commands:
        [--state]               Print every process's final state
        [--history] [--key K]   Print client operations per key, up to the first
                                violation (only the failing operation's key, if any)
+  stats [--protocol P] [--seeds N] [--first S] [--set key=v1,v2 ...]
+                               Client latency per operation and protocol counters over
+                               generated scenarios, once per combination of --set values
+                               (e.g. --set readMode=log,readIndex,lease)
   fuzz [--protocol P]          Run generated scenarios and report failures
        [--seeds N] [--first S] [--nodes 3,5] [--max-failures K]
        [--out DIR] [--no-minimize]
@@ -97,6 +104,30 @@ function printHistory(io: Io, r: RunResult, format: HistoryFormat, key: string |
       );
     }
   }
+}
+
+/** Every combination of `--set key=v1,v2` values; numbers and booleans are parsed. */
+function variants(sets: readonly string[]): Record<string, unknown>[] {
+  let out: Record<string, unknown>[] = [{}];
+  for (const set of sets) {
+    const eq = set.indexOf("=");
+    if (eq <= 0) throw new UsageError(`--set needs key=value, got "${set}"`);
+    const key = set.slice(0, eq);
+    const vals = set
+      .slice(eq + 1)
+      .split(",")
+      .map((v) =>
+        v === "true"
+          ? true
+          : v === "false"
+            ? false
+            : v !== "" && !Number.isNaN(Number(v))
+              ? Number(v)
+              : v,
+      );
+    out = out.flatMap((o) => vals.map((v) => ({ ...o, [key]: v })));
+  }
+  return out;
 }
 
 /** Runs the CLI; returns the process exit code (0 ok, 1 failure found, 2 usage error). */
@@ -192,6 +223,56 @@ export function main(argv: readonly string[], io: Io = nodeIo): number {
         io.out("FAILED:");
         problems.forEach((l) => io.out(l));
         return 1;
+      }
+
+      case "stats": {
+        const { values } = parseArgs({
+          args: rest,
+          options: {
+            protocol: { type: "string", default: "raft" },
+            seeds: { type: "string" },
+            first: { type: "string" },
+            set: { type: "string", multiple: true },
+          },
+        });
+        const entry = registry.get(values.protocol);
+        if (entry === undefined) throw new UsageError(`unknown protocol "${values.protocol}"`);
+        const seeds = int(values.seeds, "seeds", 100);
+        const first = int(values.first, "first", 0);
+        for (const overrides of variants(values.set ?? [])) {
+          const label = Object.entries(overrides)
+            .map(([k, v]) => `${k}=${String(v)}`)
+            .join(" ");
+          const histories = [];
+          const counters: Record<string, number> = {};
+          let failures = 0;
+          for (let seed = first; seed < first + seeds; seed++) {
+            const base = scenarioForSeed(registry, seed, { protocol: values.protocol });
+            const config = { ...(base.config as object), ...overrides } as CanonicalValue;
+            const scenario = { ...base, config };
+            const r = runScenario(registry, scenario, { keepTrace: true, keepState: true });
+            if (failed(r)) failures++;
+            histories.push(clientHistory(r.trace!));
+            const views = r.finalState!.filter((p) => p.role === "server").map((p) => p.view);
+            for (const [k, v] of Object.entries(entry.metrics?.(views) ?? {})) {
+              counters[k] = (counters[k] ?? 0) + v;
+            }
+          }
+          const stats = operationStats(histories);
+          const completed = Object.values(stats).reduce((n, s) => n + s.completed, 0);
+          io.out(`${label || "(scenario configs)"}: ${seeds} seeds, ${failures} failing`);
+          io.out(
+            `  ${"op".padEnd(6)}${["invoked", "done", "p50", "p90", "p99", "max"].map((h) => h.padStart(9)).join("")}`,
+          );
+          for (const [kind, st] of Object.entries(stats)) {
+            const cells = [st.invoked, st.completed, st.p50, st.p90, st.p99, st.max];
+            io.out(`  ${kind.padEnd(6)}${cells.map((c) => String(c ?? "-").padStart(9)).join("")}`);
+          }
+          for (const [k, v] of Object.entries(counters)) {
+            io.out(`  ${k}: ${v} (${(v / Math.max(completed, 1)).toFixed(2)} per completed op)`);
+          }
+        }
+        return 0;
       }
 
       case "fuzz": {

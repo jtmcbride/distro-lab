@@ -3,5 +3,10 @@ export * from "./types.ts";
 export * from "./kv.ts";
 export { raftInvariants } from "./invariants.ts";
 export { RAFT_BUGS, type RaftBug } from "./bugs.ts";
-export { figure8Scenario, leaseDriftScenario, staleReadScenario } from "./scenarios.ts";
+export {
+  figure8Scenario,
+  LEASE_RACES,
+  leaseDriftScenario,
+  staleReadScenario,
+} from "./scenarios.ts";
 export { chainKey, clientChains, raftKvWorkload } from "./workload.ts";

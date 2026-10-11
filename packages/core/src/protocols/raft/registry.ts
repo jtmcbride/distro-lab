@@ -6,7 +6,7 @@ import { requestClient, type RequestClientView } from "../../clients/requestClie
 import { clientChains, raftKvWorkload } from "./workload.ts";
 import { figure8Scenario, leaseDriftScenario, staleReadScenario } from "./scenarios.ts";
 import { describeKvOp, describeKvResult, linearizableKv, type KvOp, type KvResult } from "./kv.ts";
-import type { RaftConfig, RaftMessage, RaftView } from "./types.ts";
+import { DEFAULT_RAFT_CONFIG, type RaftConfig, type RaftMessage, type RaftView } from "./types.ts";
 
 /**
  * Liveness after faults are lifted: every node is up, exactly one node leads, all nodes agree
@@ -54,6 +54,8 @@ export function raftEntries(): ProtocolEntry[] {
     name: string,
     description: string,
     create: (config: Partial<RaftConfig>) => ReturnType<typeof raft>,
+    /** Settings forced into generated scenarios (planted bugs that live in one mode). */
+    forced: Partial<RaftConfig> = {},
   ) =>
     defineProtocol({
       name,
@@ -62,6 +64,20 @@ export function raftEntries(): ProtocolEntry[] {
       client: () => requestClient<KvOp, KvResult, RaftMessage>(),
       invariants: () => [...raftInvariants(), clientChains(), linearizableKv()],
       formatView: formatRaftView,
+      // The longest log holds every entry any server committed.
+      metrics: (views) => {
+        const log = views.reduce<readonly RaftView["log"][number][]>(
+          (longest, v) => (v.log.length > longest.length ? v.log : longest),
+          [],
+        );
+        const client = log.filter((e) => e.command.kind === "client");
+        return {
+          logEntries: log.length,
+          readEntries: client.filter(
+            (e) => e.command.kind === "client" && e.command.op.type === "get",
+          ).length,
+        };
+      },
       history: {
         partition: (op) => (op as KvOp).key,
         describeInput: (op) => describeKvOp(op as KvOp),
@@ -69,10 +85,20 @@ export function raftEntries(): ProtocolEntry[] {
       },
       // Small batches make old-term entries travel without the new leader's no-op, which is
       // what Figure 8 needs; both backoff modes get exercised.
+      // Drift bounds far beyond real clocks (up to 30%) widen the windows in which a lease
+      // bug shows, so fuzzing finds them.
       randomConfig: (rng) => ({
         maxEntriesPerAppend: rng.pick([1, 2, 4, 64]),
         fastBackoff: rng.chance(0.5),
+        readMode: rng.pick(["log", "readIndex", "lease"]),
+        maxDriftPpm: rng.pick([0, 10_000, 100_000, 300_000]),
+        ...forced,
       }),
+      // Lease mode's vote stickiness delays re-elections, and slow clocks stretch every
+      // timeout, so a backlog from a long outage needs a longer fault-free tail to drain.
+      stabilizeMs: 12_000,
+      clockDriftPpm: (config) =>
+        (config as Partial<RaftConfig> | undefined)?.maxDriftPpm ?? DEFAULT_RAFT_CONFIG.maxDriftPpm,
       examples: {
         figure8: figure8Scenario,
         "stale-read": staleReadScenario,
@@ -94,7 +120,12 @@ export function raftEntries(): ProtocolEntry[] {
   return [
     entry("raft", "Raft replicated KV store (fixed membership).", (config) => raft(config)),
     ...Object.entries(RAFT_BUGS).map(([bug, spec]) =>
-      entry(`raft-bug-${bug}`, `PLANTED BUG: ${spec.description}`, spec.create),
+      entry(
+        `raft-bug-${bug}`,
+        `PLANTED BUG: ${spec.description}`,
+        spec.create,
+        "config" in spec ? spec.config : undefined,
+      ),
     ),
   ];
 }

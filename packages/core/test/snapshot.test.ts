@@ -80,11 +80,11 @@ describe("checkpoints", () => {
   const CAUGHT_AT: Record<string, number> = {
     "double-vote": 0,
     "volatile-vote": 16,
-    "stale-votes": 461,
+    "stale-votes": 265,
     "truncate-always": 0,
-    "trust-received": 0,
+    "trust-received": 39,
     "no-sessions": 3,
-    "lost-append": 4,
+    "lost-append": 3,
   };
   for (const [bug, seed] of Object.entries(CAUGHT_AT)) {
     it(`reproduce the "${bug}" violation from checkpoints before and after it`, () => {

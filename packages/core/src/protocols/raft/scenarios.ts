@@ -176,3 +176,95 @@ export function leaseDriftScenario(protocol = "raft", leaderClockRate = 0.2): Sc
     durationMs: 5000,
   };
 }
+
+const cut = (atMs: number, a: NodeId, b: NodeId) =>
+  net(atMs, { type: "setLink", from: a, to: b, up: false, bidirectional: true });
+
+/**
+ * Races that expose each planted lease bug, as tight as the rules allow. Random faults
+ * rarely line up this precisely (fuzzing found none of them: 35,000 seeds for the first two, 5,000 for the third), so each
+ * gets a script, like Figure 8 for `commit-old-terms`. On correct Raft every one of them is
+ * linearizable; with the bug, c2 reads x=1 from A after c1's write of x=2 was acknowledged.
+ *
+ * All links take 1ms. A leads term 1; c2 writes x=1 and reads it through A.
+ */
+export const LEASE_RACES = {
+  /**
+   * A's clock runs at 0.7 and everyone else's at 1.3: the edges of a 30% bound. B is elected
+   * as soon as the followers' stickiness ends. A buggy lease (the full minimum election
+   * timeout of A's slow clock) still runs then; a correct one has already expired.
+   */
+  "lease-ignores-drift": (protocol = "raft-bug-lease-ignores-drift"): Scenario =>
+    leaseRace(protocol, 3, { A: 0.7, B: 1.3, C: 1.3, D: 1.3, E: 1.3 }, [
+      net(400, {
+        type: "partition",
+        groups: [
+          ["A", "c2"],
+          ["B", "C", "D", "E", "c1"],
+        ],
+      }),
+      timeout(500, "B"),
+      at(520, { type: "client", node: "c1", command: { type: "put", key: "x", value: "2" } }),
+      at(540, { type: "client", node: "c2", command: { type: "get", key: "x" } }),
+    ]),
+  /**
+   * Only the A-B link is cut, and B campaigns right after one of A's heartbeats. C, D and E
+   * still hear from A; with the bug they elect B anyway, and A, still holding its lease,
+   * answers a read before its next heartbeat reveals the new term.
+   */
+  "lease-no-stickiness": (protocol = "raft-bug-lease-no-stickiness"): Scenario =>
+    leaseRace(protocol, 3, {}, [
+      cut(300, "A", "B"),
+      timeout(363, "B"),
+      at(366, { type: "client", node: "c1", command: { type: "put", key: "x", value: "2" } }),
+      at(380, { type: "client", node: "c2", command: { type: "get", key: "x" } }),
+    ]),
+  /**
+   * D and E lose A early, so only B and C answer A's rounds. C crashes and restarts just as a
+   * partition separates {A, B} from {C, D, E}: with the bug, C votes at once and D wins while
+   * A's lease, which counted on C, is still running.
+   */
+  "lease-forgets-contact": (protocol = "raft-bug-lease-forgets-contact"): Scenario =>
+    leaseRace(protocol, 1, {}, [
+      cut(150, "A", "D"),
+      cut(150, "A", "E"),
+      at(365, { type: "crash", node: "C" }),
+      net(365, {
+        type: "partition",
+        groups: [
+          ["A", "B", "c2"],
+          ["C", "D", "E", "c1"],
+        ],
+      }),
+      at(366, { type: "recover", node: "C" }),
+      timeout(368, "D"),
+      at(372, { type: "client", node: "c1", command: { type: "put", key: "x", value: "2" } }),
+      at(390, { type: "client", node: "c2", command: { type: "get", key: "x" } }),
+    ]),
+} satisfies Record<string, (protocol?: string) => Scenario>;
+
+function leaseRace(
+  protocol: string,
+  seed: number,
+  clockRates: Record<NodeId, number>,
+  race: Step[],
+): Scenario {
+  const config: Partial<RaftConfig> = { readMode: "lease", maxDriftPpm: 300_000 };
+  return {
+    version: SCENARIO_VERSION,
+    protocol,
+    seed,
+    nodes: ["A", "B", "C", "D", "E"],
+    clients: ["c1", "c2"],
+    config: config as CanonicalValue,
+    ...(Object.keys(clockRates).length === 0 ? {} : { clockRates }),
+    network: { defaults: { latencyMs: 1, jitterMs: 0, loss: 0, duplicate: 0 } },
+    actions: [
+      timeout(10, "A"),
+      at(100, { type: "client", node: "c2", command: { type: "put", key: "x", value: "1" } }),
+      at(200, { type: "client", node: "c2", command: { type: "get", key: "x" } }),
+      ...race,
+    ],
+    durationMs: 3000,
+  };
+}

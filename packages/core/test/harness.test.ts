@@ -96,18 +96,22 @@ describe("chaos testing", () => {
   // First seed at which `sim fuzz` catches each bug with the current generator (re-measure
   // with `sim fuzz --protocol raft-bug-<name>` if the generator changes). commit-old-terms
   // needs the exact Figure 8 interleaving, which random faults have not produced in 1000
-  // seeds; figure8.test.ts covers it.
-  const CAUGHT_AT: Record<Exclude<Raft.RaftBug, "commit-old-terms">, [number, string]> = {
+  // seeds; figure8.test.ts covers it. The lease bugs need races just as tight (fuzzing found
+  // none in 35,000 seeds, 5,000 for lease-forgets-contact); Raft.LEASE_RACES scripts them.
+  type Scripted = "commit-old-terms" | keyof typeof Raft.LEASE_RACES;
+  const CAUGHT_AT: Record<Exclude<Raft.RaftBug, Scripted>, [number, string]> = {
     "double-vote": [0, "single-vote-per-term"],
     "volatile-vote": [16, "single-vote-per-term"],
-    "stale-votes": [461, "election-safety"],
+    "stale-votes": [265, "election-safety"],
     "truncate-always": [0, "state-machine-safety"],
-    "trust-received": [0, "acknowledged-writes-replicated"],
-    "no-sessions": [3, "client-chains"],
-    "lost-append": [4, "leader-completeness"],
-    "leader-local-reads": [59, "client-chains"],
+    "trust-received": [39, "state-machine-safety"],
+    "no-sessions": [0, "client-chains"],
+    "lost-append": [3, "leader-completeness"],
+    "leader-local-reads": [24, "linearizable"],
     // Reads stay consistent for their own client, so only the linearizability check sees it.
     "session-reads": [2667, "linearizable"],
+    "readindex-skips-round": [1774, "client-chains"],
+    "readindex-before-term-commit": [40, "linearizable"],
   };
   for (const [bug, [seed, invariant]] of Object.entries(CAUGHT_AT)) {
     it(`catches the planted bug "${bug}" and minimizes the counterexample`, () => {
@@ -124,6 +128,23 @@ describe("chaos testing", () => {
       expect(failureKind(runScenario(registry, minimized))).toBe(kind);
       // The same seed is clean on correct Raft.
       expect(runScenario(registry, { ...scenario, protocol: "raft" }).violations).toEqual([]);
+    });
+  }
+
+  for (const [bug, race] of Object.entries(Raft.LEASE_RACES)) {
+    it(`catches the planted bug "${bug}" in its scripted race, and minimizes it`, () => {
+      const scenario = race();
+      const result = runScenario(registry, scenario);
+      expect(result.violations[0]?.invariant).toBe("linearizable");
+      expect(result.violations[0]?.message).toContain('get x returned "1"');
+      const kind = failureKind(result);
+      const minimized = minimizeScenario(
+        scenario,
+        (s) => failureKind(runScenario(registry, s)) === kind,
+      );
+      expect(failureKind(runScenario(registry, minimized))).toBe(kind);
+      // Correct Raft runs the same race linearizably.
+      expect(runScenario(registry, race("raft")).violations).toEqual([]);
     });
   }
 });

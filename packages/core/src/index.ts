@@ -72,6 +72,7 @@ export {
   type FuzzReport,
 } from "./harness/fuzz.ts";
 export { defaultRegistry } from "./harness/registry.ts";
+export { opKind, operationStats, type OpStats } from "./harness/stats.ts";
 export {
   ClientHistoryBuilder,
   clientHistory,

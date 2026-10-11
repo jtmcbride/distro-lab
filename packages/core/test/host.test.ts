@@ -3,6 +3,7 @@ import {
   canonicalJson,
   defaultRegistry,
   Hasher,
+  NOTABLE_LABELS,
   Raft,
   runScenario,
   scenarioForSeed,
@@ -135,11 +136,13 @@ describe("SimulationHost", () => {
     // It stops after the event whose handler made the annotation (which may also send).
     const labels = () => records.flatMap((r) => (r.type === "annotate" ? [r.label] : []));
     expect(labels()).toEqual(["electionStarted"]);
-    host.stepToNotable();
-    pull();
-    expect(
-      records.filter((r) => r.type === "annotate").map((r) => (r as { label: string }).label),
-    ).toContain("becameLeader");
+    // Each later stop also ends at a notable event; within a few, the election completes.
+    for (let i = 0; i < 5 && !labels().includes("becameLeader"); i++) {
+      host.stepToNotable();
+      pull();
+      expect(labels().filter((l) => NOTABLE_LABELS.has(l)).length).toBeGreaterThan(i + 1);
+    }
+    expect(labels()).toContain("becameLeader");
   });
 
   it("exposes process state, including clients and armed timers", () => {

@@ -71,6 +71,18 @@ describe("sim CLI", () => {
     expect(r.out).not.toMatch(/^history of (?!k0)/m);
   });
 
+  it("compares read modes on the same seeds", () => {
+    const r = cli("stats", "--seeds", "3", "--set", "readMode=log,lease");
+    expect(r.code).toBe(0);
+    const [log, lease] = r.out.split(/^(?=readMode=)/m);
+    expect(log).toMatch(/^readMode=log: 3 seeds, 0 failing/);
+    expect(log).toMatch(/^ {2}get +\d+/m);
+    expect(log).toMatch(/readEntries: [1-9]\d*/);
+    expect(lease).toMatch(/^readMode=lease: 3 seeds, 0 failing/);
+    expect(lease).toMatch(/readEntries: 0 /);
+    expect(cli("stats", "--set", "nonsense").code).toBe(2);
+  });
+
   it("prints and runs the Figure 8 example, showing final state", () => {
     const dir = mkdtempSync(join(tmpdir(), "sim-"));
     for (const protocol of ["raft", "raft-bug-commit-old-terms"]) {

@@ -19,6 +19,12 @@ export interface GenerateOptions {
   readonly workload?: Workload | undefined;
   /** Draws protocol settings for the scenario (from the registry entry). */
   readonly randomConfig?: ((rng: Rng) => CanonicalValue) | undefined;
+  /**
+   * Clock drift the protocol assumes under a config, in parts per million (from the registry
+   * entry). If set and positive, every process gets a clock rate within it, and some rates
+   * change mid-run (still within it). Clocks run at rate 1 otherwise.
+   */
+  readonly clockDriftPpm?: ((config: CanonicalValue | undefined) => number) | undefined;
 }
 
 /**
@@ -115,15 +121,33 @@ export function generateScenario(seed: number, options: GenerateOptions): Scenar
     actions.sort((a, b) => a.atMs - b.atMs);
   }
 
+  const config =
+    options.randomConfig === undefined ? undefined : options.randomConfig(rng.stream("config"));
+
+  // Clocks use their own stream, so protocols without a drift assumption are unaffected.
+  const drift = (options.clockDriftPpm?.(config) ?? 0) / 1_000_000;
+  let clockRates: Record<NodeId, number> | undefined;
+  if (drift > 0) {
+    const crng = rng.stream("clocks");
+    const rate = () => Math.round((1 + (crng.next() * 2 - 1) * drift) * 1e6) / 1e6;
+    const all = [...nodes, ...clients];
+    clockRates = Object.fromEntries(all.map((p) => [p, rate()]));
+    const changes = crng.int(0, 3);
+    for (let i = 0; i < changes; i++) {
+      const atMs = crng.int(200, faultWindowMs - 1);
+      actions.push({ atMs, action: { type: "clock", node: crng.pick(all), rate: rate() } });
+    }
+    actions.sort((a, b) => a.atMs - b.atMs);
+  }
+
   return {
     version: SCENARIO_VERSION,
     protocol: options.protocol,
     seed,
     nodes,
     ...(clients.length > 0 ? { clients } : {}),
-    ...(options.randomConfig === undefined
-      ? {}
-      : { config: options.randomConfig(rng.stream("config")) }),
+    ...(config === undefined ? {} : { config }),
+    ...(clockRates === undefined ? {} : { clockRates }),
     network: {
       defaults: {
         latencyMs: rng.int(1, 20),

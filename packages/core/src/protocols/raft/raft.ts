@@ -25,6 +25,16 @@ export interface PlantedRaftBugs {
   readonly trustReceivedEntries?: boolean;
   /** No session table: retried requests execute again. */
   readonly noSessions?: boolean;
+  /** Lease length is the minimum election timeout, not shortened for clock drift. */
+  readonly leaseIgnoresDrift?: boolean;
+  /** Followers vote for candidates even while they hear from a leader. */
+  readonly noVoteStickiness?: boolean;
+  /** A restarted server votes at once, forgetting it may have just answered a leader. */
+  readonly leaseForgetsContact?: boolean;
+  /** ReadIndex reads are served once applied, without waiting for the heartbeat round. */
+  readonly readIndexSkipsRound?: boolean;
+  /** ReadIndex takes the commit index before the leader has committed in its own term. */
+  readonly readIndexBeforeTermCommit?: boolean;
 }
 
 type State = NodeState<RaftPersistent, RaftVolatile>;
@@ -96,7 +106,10 @@ export function raft(
    * min * (1 - e) / (1 + e) local ms.
    */
   const drift = config.maxDriftPpm / 1_000_000;
-  const leaseMs = (config.electionTimeoutMinMs * (1 - drift)) / (1 + drift);
+  const leaseMs =
+    bugs.leaseIgnoresDrift === true
+      ? config.electionTimeoutMinMs
+      : (config.electionTimeoutMinMs * (1 - drift)) / (1 + drift);
 
   function resetElectionTimer(ctx: Ctx): void {
     ctx.setTimer(
@@ -121,7 +134,7 @@ export function raft(
   /** Lease mode: may this server consider a candidate's RequestVote yet? */
   function mayVote(ctx: Ctx, s: State): boolean {
     const contact = s.volatile.lastLeaderContact;
-    if (!leases || contact === null) return true;
+    if (!leases || contact === null || bugs.noVoteStickiness === true) return true;
     if (s.volatile.role === "leader") return false;
     return ctx.localNow - contact >= config.electionTimeoutMinMs;
   }
@@ -430,7 +443,8 @@ export function raft(
   function startParkedReads(ctx: Ctx, s: State): void {
     const v = s.volatile;
     const parked = v.pendingReads.filter((r) => r.readIndex === null);
-    if (parked.length === 0 || !committedInTerm(s)) return;
+    if (parked.length === 0) return;
+    if (!committedInTerm(s) && bugs.readIndexBeforeTermCommit !== true) return;
     // With a valid lease no other leader can have committed anything: no round needed.
     const lease = leaseValid(ctx, s);
     if (!lease) broadcastAppend(ctx, s);
@@ -459,7 +473,7 @@ export function raft(
           renewing = true;
           r.round = v.round;
         }
-        if (confirmed < r.round) return true;
+        if (confirmed < r.round && bugs.readIndexSkipsRound !== true) return true;
       }
       ctx.annotate("readServed", {
         client: r.clientId,
@@ -553,7 +567,7 @@ export function raft(
       const volatile = freshVolatile();
       // We may have answered a leader's round just before crashing, and no longer know when:
       // wait out a full election timeout before voting, as if we had heard from it now.
-      if (leases) volatile.lastLeaderContact = ctx.localNow;
+      if (leases && bugs.leaseForgetsContact !== true) volatile.lastLeaderContact = ctx.localNow;
       return { persistent, volatile };
     },
 
