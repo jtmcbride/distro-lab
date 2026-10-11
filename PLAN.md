@@ -246,9 +246,50 @@ Findings:
   version, so a lossy, strict, W=3 run left 32 copies of two values as siblings. This is
   Dynamo's real behavior and is left visible.
 
-## Later phases
+## Phase 6 — Linearizability checking, docs and tutorials
 
-6. Linearizability checking (Porcupine-style) for the KV store; docs, tutorials, GitHub Pages.
+Goal: check the Raft store's client-visible history for linearizability after every event,
+catch read bugs that the per-client chain check cannot see, show histories and their
+violations in the CLI and the UI, and teach the protocols with guided tutorials on the site.
+
+Design decisions:
+
+- **Checked incrementally, as a frontier.** Instead of searching the whole history after the
+  run (Wing & Gong, Porcupine), the checker keeps the set of configurations every
+  linearization of the history so far can be in: the model state plus which pending
+  operations are already linearized and with what output (just-in-time linearization, Lowe
+  2017). Every completed operation must be linearized before anything invoked later, so this
+  set summarizes the past exactly. An `invoke` adds a pending operation; a `complete` closes
+  the frontier under linearizing pending operations and keeps the configurations in which
+  this one was linearized with the returned output. An empty frontier is a violation,
+  reported at the completing record, like every other invariant.
+- **Models are deterministic and partitioned.** A model maps `(state, input)` to
+  `(state, output)` and names an operation's partition; the KV model partitions by key
+  (P-compositionality), so each key's frontier stays small. Raft's KV is the only model in
+  this phase.
+- **Pending operations may or may not take effect.** An operation with no `complete` (its
+  client crashed, or the run ended) can be linearized at any point after its invocation, or
+  never. Retries keep one `(clientId, seq)`, so one operation spans all of its attempts.
+- **Violations explain themselves**: the operation, what it returned, and what it could have
+  returned given everything that completed before it and everything concurrent with it.
+- **A brute-force reference checker** (every permutation that respects real time) exists only
+  in tests, to cross-check the frontier on random small histories.
+
+| #   | Work                                                                                                                               | Exit criterion                                                                                           | Status |
+| --- | ---------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- | ------ |
+| 1   | Checker: models, histories, per-partition frontier with pending operations, explanation of a failure                               | Agrees with a brute-force checker on 10k random small histories; textbook examples pass and fail         | done   |
+| 2   | KV register model; history from client annotations; `linearizable` invariant for Raft (incremental, checkpointable)                | 10k Raft seeds clean; ≥ 90k events/s (100k before)                                                       | todo   |
+| 3   | Planted read bugs: leader answers reads locally without confirming it still leads; any server answers reads from its applied state | Both caught by fuzzing and minimized; `client-chains` alone misses at least one; `CAUGHT_AT` re-measured | todo   |
+| 4   | CLI: `sim run --history` prints per-key histories and, for a violation, the failing operation's window                             | A step 3 failure is understandable from the CLI alone                                                    | todo   |
+| 5   | UI: history panel (client lanes on a time axis, operations as bars, key filter), violation highlight, click to seek                | The stale-read example shows the failing read and the write it missed                                    | todo   |
+| 6   | Tutorials: guided tours over the examples (election, Figure 8, stale reads, siblings, sloppy quorum); `docs/linearizability.md`    | Each tour runs end to end in e2e                                                                         | todo   |
+| 7   | Hardening: e2e, README, results, Pages                                                                                             | CI green; the live site serves the tutorials                                                             | todo   |
+
+Out of scope: linearizability for Dynamo (its reads return sibling sets, and it does not
+promise linearizability under any configuration), offline WGL search, models other than
+the KV register.
+
+## Later phases
 
 Explicitly excluded from the first release: dynamic membership, snapshots/compaction,
 linearizable-read optimizations, real sockets, Byzantine faults.

@@ -42,6 +42,12 @@ export {
   type Report,
   type Violation,
 } from "./invariants.ts";
+export {
+  LinearizabilityChecker,
+  type LinearizabilityFailure,
+  type LinearizabilityState,
+  type Model,
+} from "./linearizability.ts";
 export * as Raft from "./protocols/raft/index.ts";
 export * as Dynamo from "./protocols/dynamo/index.ts";
 export {
