@@ -283,7 +283,7 @@ Design decisions:
 | 4   | CLI: `sim run --history` prints per-key histories and, for a violation, the failing operation's window                                                   | A step 3 failure is understandable from the CLI alone                                                    | done   |
 | 5   | UI: history panel (client lanes on a time axis, operations as bars, key filter), violation highlight, click to seek                                      | The stale-read example shows the failing read and the write it missed                                    | done   |
 | 6   | Tutorials: guided tours over the examples (election, Figure 8, stale reads, siblings, sloppy quorum); `docs/linearizability.md`                          | Each tour runs end to end in e2e                                                                         | done   |
-| 7   | Hardening: e2e, README, results, Pages                                                                                                                   | CI green; the live site serves the tutorials                                                             | todo   |
+| 7   | Hardening: e2e, README, results, Pages                                                                                                                   | CI green; the live site serves the tutorials                                                             | done   |
 
 Out of scope: linearizability for Dynamo (its reads return sibling sets, and it does not
 promise linearizability under any configuration), offline WGL search, models other than
@@ -350,6 +350,35 @@ Design decisions:
 
 Out of scope: clock offsets and jumps, lease handoff, follower reads, slow processing (GC
 pauses), clocks for Dynamo (it orders writes by dotted versions, not time).
+
+**Phase 7 result:** 10,000 generated Raft scenarios mixing all three read modes, with every
+clock drifting within bounds of up to 30% and changing rate mid-run (42.3M events, 98k
+events/s), are linearizable with zero safety or liveness failures. Forcing each mode on
+10,000 seeds: ReadIndex is clean; leases are clean on safety with one liveness failure,
+which the longer fault-free tail now covers. At rate 1 every existing trace is
+byte-identical. On the same 100 seeds leases halve the median read (44ms vs 84ms) and
+ReadIndex and leases cut log entries by 28%. Two of five new planted bugs are found by
+fuzzing (seeds 40 and 1774); the three lease bugs only by scripted races. The UI shows
+clocks, leases and read modes, and a tutorial walks through a lease outliving its leader.
+
+Findings:
+
+- **ReadIndex is not faster here.** A log read and a ReadIndex read both cost one round trip
+  to a majority; the log read's extra cost is the disk write, which the simulator does not
+  model. ReadIndex's win is a smaller log. The step 5 criterion was rewritten to match.
+- **Lease bugs hide from random faults.** Each is unsafe only in a window of tens of
+  milliseconds in which a successor must be elected and commit a write while a read reaches
+  the old leader. 35,000 seeds with drift bounds up to 30% found none, so each is scripted
+  as tightly as the rules allow; a correct lease survives every script.
+- **Bug variants must run what their scenarios say.** Forcing lease mode inside the protocol
+  while the generated config said otherwise also left the drift bound random, often 0, where
+  `lease-ignores-drift` is harmless. Bugs now declare the config they live in, and the
+  generator writes it into the scenario.
+- **Leases cost liveness.** Vote stickiness delays every re-election by up to a minimum
+  election timeout, and slow clocks stretch every timeout; with a backlog and 5% loss, one
+  forced-lease run did not drain in 8s. Raft's fault-free tail is now 12s, like Dynamo's.
+- **A restarted server must not vote at once.** It may have answered the round a lease
+  rests on just before crashing; forgetting that is one of the three lease bugs.
 
 ## Later phases
 

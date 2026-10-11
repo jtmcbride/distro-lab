@@ -2,12 +2,14 @@
 
 Deterministic distributed-systems simulator. See [PLAN.md](PLAN.md) for the roadmap,
 [docs/semantics.md](docs/semantics.md) for exactly what the simulator models, and
-[docs/linearizability.md](docs/linearizability.md) for how client histories are checked.
+[docs/linearizability.md](docs/linearizability.md) for how client histories are checked, and
+[docs/reads.md](docs/reads.md) for Raft's fast reads and the clocks they depend on.
 
 **[Try it in the browser](https://jtmcbride.github.io/distro-lab/)**, starting with a guided
 tutorial: [leader election](https://jtmcbride.github.io/distro-lab/?tour=election),
 [Figure 8](https://jtmcbride.github.io/distro-lab/?tour=figure8),
 [stale reads](https://jtmcbride.github.io/distro-lab/?tour=stale-read),
+[leases and clocks](https://jtmcbride.github.io/distro-lab/?tour=leases),
 [Dynamo siblings](https://jtmcbride.github.io/distro-lab/?tour=siblings), or
 [sloppy quorums](https://jtmcbride.github.io/distro-lab/?tour=sloppy-quorum).
 
@@ -21,7 +23,9 @@ pnpm check   # format, lint, typecheck, test
 - `packages/core`: simulation engine, network model, protocols, invariants, chaos harness,
   time travel. No DOM or Node dependencies. Two protocols, each with planted-bug variants:
   - Raft with a replicated KV store (linearizable, exactly-once), checked online for
-    linearizability against every client-visible history.
+    linearizability against every client-visible history. Reads go through the log, use
+    ReadIndex, or use leader leases that assume bounded clock drift; every process has a
+    local clock that can drift.
   - A Dynamo-style leaderless store: consistent hashing, N/R/W quorums, sloppy quorums with
     hinted handoff, read repair, anti-entropy, dotted version vectors with siblings, and CRDT
     values (counters on `count:` keys, observed-remove sets on `set:` keys).
@@ -44,6 +48,7 @@ pnpm sim fuzz --protocol raft-bug-stale-votes --out failures
 pnpm sim run failures/raft-bug-stale-votes-seed9.min.json --tail 20
 pnpm sim gen --seed 2667 --protocol raft-bug-session-reads > s.json
 pnpm sim run s.json --history                   # client operations on the failing key
+pnpm sim stats --seeds 100 --set readMode=log,readIndex,lease   # compare read paths
 pnpm sim fuzz --protocol dynamo --seeds 1000    # chaos-test the Dynamo-style store
 pnpm sim example sloppy-quorum --protocol dynamo > s.json && pnpm sim run s.json --state
 pnpm sim gen --seed 42 > scenario.json          # inspect or hand-edit a scenario

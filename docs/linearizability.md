@@ -107,7 +107,8 @@ of keys other clients wrote. Two planted bugs show the difference:
 
 Correct Raft serves reads through the log, which is linearizable but costs a log write per
 read. ReadIndex (confirm leadership with a heartbeat round, then wait to apply up to the
-commit index seen) and leader leases avoid the write; both are out of scope here.
+commit index seen) and leader leases avoid the write; [reads.md](reads.md) covers both and
+the bugs the linearizability check catches in them.
 
 ## What it does not check
 

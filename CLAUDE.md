@@ -30,8 +30,9 @@ CHROMIUM_PATH=/path/to/chrome-headless-shell pnpm -C apps/web e2e   # use an alr
 pnpm sim list
 pnpm sim fuzz --seeds 1000 [--protocol raft|dynamo|<name>-bug-<bug>] [--out failures]
 pnpm sim run scenario.json [--trace | --tail N] [--state] [--history [--key K]]
+pnpm sim stats --seeds 100 --set readMode=log,readIndex,lease   # latency/counters per variant
 pnpm sim gen --seed 42
-pnpm sim example figure8                          # or sloppy-quorum --protocol dynamo
+pnpm sim example figure8                          # or sloppy-quorum --protocol dynamo, lease-drift
 ```
 
 Nothing is built for Node: `@distro-lab/core` exports `./src/index.ts` directly. Imports use
@@ -62,9 +63,10 @@ Bottom up:
 - **Protocol interface** (`protocol.ts`): callbacks (`init`, `recover`, `onMessage`, `onTimer`,
   `onClientCommand`) mutate their own node state and request effects through `ctx` (`send`,
   `setTimer`, `cancelTimer`, `annotate`), applied after the callback returns. `ctx.now` is
-  true time; `ctx.localNow` is the node's drifting local clock, and timer delays are local. `view(state)` is
-  the plain-data view invariants and the UI see; invariants never read internal state. Node
-  state must be plain structured-clonable data, because checkpoints copy it.
+  true time; `ctx.localNow` is the node's drifting local clock, and timer delays are local.
+  `view(state)` is the plain-data view invariants and the UI see; invariants never read
+  internal state. Node state must be plain structured-clonable data, because checkpoints
+  copy it.
 - **Network** (`linkNetwork.ts`): directed links (latency, jitter, loss, duplication, up), plus
   `setLink`, `setAll`, `partition`, `isolate`, `heal`, `restore`. Not FIFO.
 - **Invariants** (`invariants.ts`): `InvariantMonitor` runs every `check` after each step on a
@@ -80,11 +82,13 @@ Bottom up:
   `invoke`/`complete` annotations form the client-visible history. Optional hooks rewrite an
   op as it starts and learn from results (Dynamo attaches read contexts this way).
 - **Harness** (`harness/`): a `Scenario` is plain JSON and always replays to the same trace hash.
-  `generate.ts` turns a seed into faults plus a workload, `fuzz.ts` runs seeds, `minimize.ts`
-  shrinks failures. `defineProtocol` builds a `ProtocolEntry` (factory, client protocol,
-  invariants and liveness, both given the scenario's protocol config, workload, random config,
-  examples, view formatter, optional longer `stabilizeMs`); `registry.ts` maps names to
-  entries and is what the CLI, host and web app use.
+  `generate.ts` turns a seed into faults plus a workload (and clock rates within the drift a
+  protocol's config assumes), `fuzz.ts` runs seeds, `minimize.ts` shrinks failures,
+  `stats.ts` summarizes client latency. `defineProtocol` builds a `ProtocolEntry` (factory,
+  client protocol, invariants and liveness, both given the scenario's protocol config,
+  workload, random config, clock drift, examples, view formatter, history format, metrics,
+  optional longer `stabilizeMs`); `registry.ts` maps names to entries and is what the CLI,
+  host and web app use.
 - **Time travel** (`snapshot.ts`, `host/host.ts`): a checkpoint is the simulation's and the
   monitor's state copied by one `structuredClone` (invariant history can point at objects in
   protocol state). `SimulationHost` drives a run for the UI: playback, steps both ways, seek
@@ -117,7 +121,9 @@ intentionally broken variants that prove the checkers work. Don't "fix" them.
 `test/harness.test.ts` and `test/dynamoHarness.test.ts` pin the first seed at which `sim fuzz`
 catches each bug (`CAUGHT_AT`); changing the generator, a workload, the RNG draw order or
 protocol timing usually shifts them. Re-measure with `pnpm sim fuzz --protocol <name>` and
-update the table. Raft's `commit-old-terms` is caught only by the scripted Figure 8 test.
+update the table. Raft's `commit-old-terms` is caught only by the scripted Figure 8 test, and
+its three lease bugs only by `Raft.LEASE_RACES`. Bugs that live in one read mode force that
+config into generated scenarios (`BugSpec.config`).
 
 ### `packages/cli`
 
