@@ -15,7 +15,15 @@ export interface RaftConfig {
    * §5.3) instead of one entry at a time.
    */
   readonly fastBackoff: boolean;
+  /**
+   * How `get`s are served. `log`: as log entries, like writes. `readIndex`: the leader
+   * confirms it still leads with a heartbeat round, waits to apply up to the commit index it
+   * saw, then answers from its state machine (no log entry). `lease`: see `leaseMs`.
+   */
+  readonly readMode: ReadMode;
 }
+
+export type ReadMode = "log" | "readIndex" | "lease";
 
 export const DEFAULT_RAFT_CONFIG: RaftConfig = {
   electionTimeoutMinMs: 150,
@@ -23,6 +31,7 @@ export const DEFAULT_RAFT_CONFIG: RaftConfig = {
   heartbeatIntervalMs: 50,
   maxEntriesPerAppend: 64,
   fastBackoff: true,
+  readMode: "log",
 };
 
 export type RaftCommand =
@@ -66,6 +75,26 @@ export interface RaftVolatile {
   matchIndex: Record<NodeId, number>;
   /** State machine; rebuilt by re-applying the log after a restart. */
   kv: KvState;
+  /** Leaders only (readIndex): heartbeat rounds started in this term; sent as `round`. */
+  round: number;
+  /** Leaders only: highest round each follower has answered in this term. */
+  ackedRound: Record<NodeId, number>;
+  /** Leaders only: reads waiting to be served without a log entry. */
+  pendingReads: PendingRead[];
+}
+
+/** A read the leader will answer once it has confirmed leadership and applied enough. */
+export interface PendingRead {
+  readonly clientId: NodeId;
+  readonly seq: number;
+  readonly op: KvOp;
+  /**
+   * Commit index when the read was accepted; null until the leader has committed an entry in
+   * its own term (before that, its commit index may be behind the previous leader's).
+   */
+  readIndex: number | null;
+  /** Heartbeat round that must be answered by a majority (started after `readIndex`). */
+  round: number | null;
 }
 
 export interface RequestVote {
@@ -90,6 +119,8 @@ export interface AppendEntries {
   readonly prevLogTerm: number;
   readonly entries: readonly RaftLogEntry[];
   readonly leaderCommit: number;
+  /** Heartbeat round (readIndex and lease modes only); echoed in the response. */
+  readonly round?: number;
 }
 
 export type AppendEntriesResponse =
@@ -99,6 +130,7 @@ export type AppendEntriesResponse =
       readonly success: true;
       /** prevLogIndex + entries.length of the request: known to match the leader. */
       readonly matchIndex: number;
+      readonly round?: number;
     }
   | {
       readonly type: "AppendEntriesResponse";
@@ -107,6 +139,7 @@ export type AppendEntriesResponse =
       /** Fast backoff hints: where the leader should retry from. */
       readonly conflictIndex: number;
       readonly conflictTerm: number | null;
+      readonly round?: number;
     };
 
 export type RaftMessage =
@@ -129,4 +162,6 @@ export type RaftView = {
   readonly data: Readonly<Record<string, string>>;
   /** Highest applied request seq per client (the exactly-once session table). */
   readonly sessions: Readonly<Record<NodeId, number>>;
+  /** Leaders: reads waiting to be served outside the log. */
+  readonly pendingReads: number;
 };

@@ -338,15 +338,15 @@ Design decisions:
   how). Followers refuse to vote while they have heard from a leader within the minimum
   election timeout, which is what lets a lease outlive a partition safely.
 
-| #   | Work                                                                                                                     | Exit criterion                                                          | Status |
-| --- | ------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------- | ------ |
-| 1   | Engine: per-process drifting clocks, `clockRates`, `clock` action, `ctx.localNow`, timers in local time, semantics doc   | Same trace hashes at rate 1; property tests on timer firing under drift | done   |
-| 2   | ReadIndex                                                                                                                | 10k seeds linearizable; reads add no log entries                        | todo   |
-| 3   | Leader leases with drift-aware expiry; followers' vote check                                                             | 10k seeds linearizable with drift inside the bound                      | todo   |
-| 4   | Generator: clock rates and rate changes; planted bugs (lease ignoring drift, ReadIndex without the heartbeat round, ...) | Each caught by the linearizability check and minimized                  | todo   |
-| 5   | Metrics: read latency and log entries per read for each mode, in the CLI                                                 | `log` > `readIndex` > `lease` in read latency on the same scenarios     | todo   |
-| 6   | UI: local clocks and lease state in the inspector, read mode and clock tools, lease-vs-drift example and tutorial        | The tutorial's claims pass `tours.test.ts`                              | todo   |
-| 7   | Hardening: e2e, docs, results                                                                                            | CI green                                                                | todo   |
+| #   | Work                                                                                                                     | Exit criterion                                                                       | Status |
+| --- | ------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------ | ------ |
+| 1   | Engine: per-process drifting clocks, `clockRates`, `clock` action, `ctx.localNow`, timers in local time, semantics doc   | Same trace hashes at rate 1; property tests on timer firing under drift              | done   |
+| 2   | ReadIndex                                                                                                                | 10k seeds linearizable; reads add no log entries                                     | todo   |
+| 3   | Leader leases with drift-aware expiry; followers' vote check                                                             | 10k seeds linearizable with drift inside the bound                                   | todo   |
+| 4   | Generator: clock rates and rate changes; planted bugs (lease ignoring drift, ReadIndex without the heartbeat round, ...) | Each caught by the linearizability check and minimized                               | todo   |
+| 5   | Metrics: read latency and log entries per read for each mode, in the CLI                                                 | `lease` answers in one client round trip; `readIndex` and `lease` add no log entries | todo   |
+| 6   | UI: local clocks and lease state in the inspector, read mode and clock tools, lease-vs-drift example and tutorial        | The tutorial's claims pass `tours.test.ts`                                           | todo   |
+| 7   | Hardening: e2e, docs, results                                                                                            | CI green                                                                             | todo   |
 
 Out of scope: clock offsets and jumps, lease handoff, follower reads, slow processing (GC
 pauses), clocks for Dynamo (it orders writes by dotted versions, not time).

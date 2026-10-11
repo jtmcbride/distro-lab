@@ -53,7 +53,8 @@ export function raft(
     config.heartbeatIntervalMs <= 0 ||
     config.heartbeatIntervalMs >= config.electionTimeoutMinMs ||
     !Number.isSafeInteger(config.maxEntriesPerAppend) ||
-    config.maxEntriesPerAppend < 1
+    config.maxEntriesPerAppend < 1 ||
+    !["log", "readIndex", "lease"].includes(config.readMode)
   ) {
     throw new RangeError(`invalid Raft config: ${JSON.stringify(config)}`);
   }
@@ -74,8 +75,14 @@ export function raft(
       nextIndex: {},
       matchIndex: {},
       kv: emptyKv(),
+      round: 0,
+      ackedRound: {},
+      pendingReads: [],
     };
   }
+
+  /** Rounds are carried only when reads are served outside the log. */
+  const rounds = config.readMode !== "log";
 
   function resetElectionTimer(ctx: Ctx): void {
     ctx.setTimer(
@@ -89,6 +96,10 @@ export function raft(
     s.volatile.votesGranted = [];
     s.volatile.nextIndex = {};
     s.volatile.matchIndex = {};
+    // Unanswered reads are dropped; their clients time out and retry elsewhere.
+    s.volatile.pendingReads = [];
+    s.volatile.round = 0;
+    s.volatile.ackedRound = {};
   }
 
   // ---------------------------------------------------------------------------------------
@@ -194,12 +205,14 @@ export function raft(
       prevLogTerm: termAt(s, prevLogIndex),
       entries: s.persistent.log.slice(prevLogIndex, prevLogIndex + config.maxEntriesPerAppend),
       leaderCommit: s.volatile.commitIndex,
+      ...(rounds ? { round: s.volatile.round } : {}),
     };
     ctx.send(peer, request);
   }
 
   /** Sends to every follower (doubles as the heartbeat) and re-arms the heartbeat timer. */
   function broadcastAppend(ctx: Ctx, s: State): void {
+    if (rounds) s.volatile.round++;
     for (const p of ctx.peers) sendAppend(ctx, s, p);
     ctx.setTimer(HEARTBEAT_TIMER, config.heartbeatIntervalMs);
   }
@@ -214,6 +227,7 @@ export function raft(
         success: false,
         conflictIndex,
         conflictTerm,
+        ...(m.round === undefined ? {} : { round: m.round }),
       };
       ctx.send(from, response);
     };
@@ -264,6 +278,7 @@ export function raft(
       term: p.currentTerm,
       success: true,
       matchIndex: lastNew,
+      ...(m.round === undefined ? {} : { round: m.round }),
     };
     ctx.send(from, response);
   }
@@ -276,6 +291,11 @@ export function raft(
   ): void {
     const v = s.volatile;
     if (v.role !== "leader" || m.term !== s.persistent.currentTerm) return;
+    // Any answer in our term, accepted or not, shows the follower still recognizes us.
+    if (m.round !== undefined && m.round > (v.ackedRound[from] ?? 0)) {
+      v.ackedRound[from] = m.round;
+      serveReads(ctx, s);
+    }
     const match = v.matchIndex[from] ?? 0;
     // Follow-up sends happen only when a response makes progress. Duplicated or stale
     // responses must not trigger sends: each would yield more responses, and with message
@@ -329,6 +349,58 @@ export function raft(
       }
     }
     applyCommitted(ctx, s);
+    if (v.role === "leader") startParkedReads(ctx, s);
+  }
+
+  // ---------------------------------------------------------------------------------------
+  // Reads outside the log (thesis §6.4)
+
+  /** True once this leader has committed an entry from its own term. */
+  const committedInTerm = (s: State) =>
+    termAt(s, s.volatile.commitIndex) === s.persistent.currentTerm;
+
+  /** Accepts a read: fixes its read index now if possible, else parks it until then. */
+  function acceptRead(ctx: Ctx, s: State, m: ClientRequest<KvOp>): void {
+    s.volatile.pendingReads.push({
+      clientId: m.clientId,
+      seq: m.seq,
+      op: m.op,
+      readIndex: null,
+      round: null,
+    });
+    startParkedReads(ctx, s);
+  }
+
+  /**
+   * Gives parked reads a read index (the current commit index) and a heartbeat round that
+   * starts now, after it was fixed: a majority answering that round proves no other leader
+   * had committed anything newer when the index was taken.
+   */
+  function startParkedReads(ctx: Ctx, s: State): void {
+    const v = s.volatile;
+    const parked = v.pendingReads.filter((r) => r.readIndex === null);
+    if (parked.length === 0 || !committedInTerm(s)) return;
+    broadcastAppend(ctx, s);
+    for (const r of parked) {
+      r.readIndex = v.commitIndex;
+      r.round = v.round;
+    }
+    serveReads(ctx, s); // a single-node cluster needs no round
+  }
+
+  /** Answers every read whose round a majority has answered and whose index is applied. */
+  function serveReads(ctx: Ctx, s: State): void {
+    const v = s.volatile;
+    if (v.role !== "leader" || v.pendingReads.length === 0) return;
+    v.pendingReads = v.pendingReads.filter((r) => {
+      if (r.readIndex === null || r.round === null || v.lastApplied < r.readIndex) return true;
+      const round = r.round;
+      const confirmed = 1 + ctx.peers.filter((p) => (v.ackedRound[p] ?? 0) >= round).length;
+      if (confirmed < majority(ctx)) return true;
+      ctx.annotate("readServed", { client: r.clientId, seq: r.seq, readIndex: r.readIndex });
+      reply(ctx, r.clientId, r.seq, executeKv(v.kv.data, r.op));
+      return false;
+    });
   }
 
   // ---------------------------------------------------------------------------------------
@@ -349,6 +421,7 @@ export function raft(
       // by a predecessor, since the client matches replies by seq.
       if (result !== null && v.role === "leader") reply(ctx, clientId, seq, result);
     }
+    serveReads(ctx, s);
   }
 
   function reply(ctx: Ctx, clientId: NodeId, seq: number, result: KvResult): void {
@@ -366,6 +439,10 @@ export function raft(
         leaderHint: v.leaderId,
       };
       ctx.send(from, redirect);
+      return;
+    }
+    if (m.op.type === "get" && config.readMode !== "log") {
+      acceptRead(ctx, s, m);
       return;
     }
     const session = bugs.noSessions === true ? undefined : v.kv.sessions[m.clientId];
@@ -452,6 +529,7 @@ export function raft(
         sessions: Object.fromEntries(
           Object.entries(s.volatile.kv.sessions).map(([client, session]) => [client, session.seq]),
         ),
+        pendingReads: s.volatile.pendingReads.length,
       };
     },
   };
