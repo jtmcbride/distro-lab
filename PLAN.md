@@ -289,6 +289,28 @@ Out of scope: linearizability for Dynamo (its reads return sibling sets, and it 
 promise linearizability under any configuration), offline WGL search, models other than
 the KV register.
 
+**Phase 6 result:** 10,000 generated Raft scenarios (34.3M events, 102k events/s, the same as
+before the check) are linearizable after every event, with zero safety or liveness failures.
+The frontier checker agrees with a brute-force search on 10,000 random histories. Both
+planted read bugs are caught by fuzzing and minimized: `leader-local-reads` at seed 59 and
+`session-reads` at seed 2667, the latter only by the linearizability check. The stale-read
+example and five guided tutorials (every claim checked against a fresh run) are in the UI.
+
+Findings:
+
+- **An invariant encoded an implementation, not a guarantee.** `acknowledged-writes-replicated`
+  required every acknowledged request, reads included, to be in a majority's logs. That holds
+  for this Raft but would reject a correct ReadIndex or lease read, and it caught the read
+  bugs for the wrong reason. It now covers writes; stale reads are the history check's job.
+- **Most read bugs surface first on a client's own key**, so `client-chains` catches them as
+  early as linearizability does. A bug that keeps read-your-writes is invisible to it, and
+  rare under fuzzing too (first at seed 2667): clients follow the leader they last heard
+  from, so a stale server answers only after a leadership change the client has missed.
+- **The online check is free in practice.** Each key's frontier holds at most one pending
+  operation per client, so a completion costs a handful of model steps.
+- **Tutorial text drifts like code**, so it is tested like code: the claim test caught a
+  wrong retry count while the tours were being written.
+
 ## Later phases
 
 Explicitly excluded from the first release: dynamic membership, snapshots/compaction,
