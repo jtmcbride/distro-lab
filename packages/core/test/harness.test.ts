@@ -101,10 +101,13 @@ describe("chaos testing", () => {
     "double-vote": [0, "single-vote-per-term"],
     "volatile-vote": [16, "single-vote-per-term"],
     "stale-votes": [461, "election-safety"],
-    "truncate-always": [0, "acknowledged-writes-replicated"],
+    "truncate-always": [0, "state-machine-safety"],
     "trust-received": [0, "acknowledged-writes-replicated"],
     "no-sessions": [3, "client-chains"],
-    "lost-append": [4, "acknowledged-writes-replicated"],
+    "lost-append": [4, "leader-completeness"],
+    "leader-local-reads": [59, "client-chains"],
+    // Reads stay consistent for their own client, so only the linearizability check sees it.
+    "session-reads": [2667, "linearizable"],
   };
   for (const [bug, [seed, invariant]] of Object.entries(CAUGHT_AT)) {
     it(`catches the planted bug "${bug}" and minimizes the counterexample`, () => {

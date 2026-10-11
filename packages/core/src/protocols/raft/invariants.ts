@@ -407,17 +407,31 @@ function leaderAppendOnly(changes: Tracker): Invariant<RaftView> {
 }
 
 /**
- * Client-visible durability: when a client receives a reply, the request's entry is
- * already stored on a majority of servers (so leader completeness keeps it forever).
+ * Client-visible durability: when a client receives a reply to a write, the request's entry
+ * is already stored on a majority of servers (so leader completeness keeps it forever).
+ * Reads are left to the history checks: a correct store may serve them without a log entry.
  */
 function acknowledgedWritesReplicated(): Invariant<RaftView> {
+  /** `client#seq` of invoked reads that have not completed. */
+  let reads = new Set<string>();
   return {
     name: "acknowledged-writes-replicated",
+    save: () => reads,
+    load: (state) => {
+      reads = state as Set<string>;
+    },
     check() {},
     onRecord(r, now, report) {
-      if (r.type !== "annotate" || r.label !== "complete") return;
-      const seq = (r.data as { seq?: unknown } | undefined)?.seq;
+      if (r.type !== "annotate") return;
+      const data = r.data as { seq?: unknown; op?: { type?: unknown } } | undefined;
+      const seq = data?.seq;
       if (typeof seq !== "number") return;
+      const id = `${r.node}#${seq}`;
+      if (r.label === "invoke") {
+        if (data?.op?.type === "get") reads.add(id);
+        return;
+      }
+      if (r.label !== "complete" || reads.delete(id)) return;
       const s = now();
       const holders = s.nodes.filter((n) =>
         n.view.log.some(
@@ -428,7 +442,7 @@ function acknowledgedWritesReplicated(): Invariant<RaftView> {
       const majority = Math.floor(s.nodes.length / 2) + 1;
       if (holders.length < majority) {
         report(
-          `${r.node} got a reply for request ${seq}, but only ${holders.length} of ${s.nodes.length} servers store it`,
+          `${r.node} got a reply for write ${seq}, but only ${holders.length} of ${s.nodes.length} servers store it`,
           // Every server's log is part of the claim, not only the holders'.
           [
             r.node,

@@ -1,6 +1,7 @@
-import type { Protocol } from "../../protocol.ts";
+import type { ClientReply } from "../../clients/requestClient.ts";
+import type { NodeId, NodeState, Protocol } from "../../protocol.ts";
 import { raft, type PlantedRaftBugs } from "./raft.ts";
-import type { KvOp } from "./kv.ts";
+import { executeKv, type KvOp, type KvResult } from "./kv.ts";
 import type { RaftConfig, RaftMessage, RaftPersistent, RaftVolatile } from "./types.ts";
 
 type RaftProtocol = Protocol<RaftPersistent, RaftVolatile, RaftMessage, KvOp>;
@@ -14,6 +15,36 @@ const internal = (description: string, flags: PlantedRaftBugs): BugSpec => ({
   description,
   create: (config) => raft(config, flags),
 });
+
+/** Answers a client's `get` from the local applied state when `serves` says so, skipping the log. */
+function localReads(
+  description: string,
+  serves: (s: NodeState<RaftPersistent, RaftVolatile>, clientId: NodeId, seq: number) => boolean,
+): BugSpec {
+  return {
+    description,
+    create(config) {
+      const base = raft(config);
+      return {
+        ...base,
+        onMessage(ctx, s, from, m) {
+          if (m.type === "ClientRequest" && m.op.type === "get" && serves(s, m.clientId, m.seq)) {
+            const result = executeKv(s.volatile.kv.data, m.op);
+            const reply: ClientReply<KvResult> = {
+              type: "ClientReply",
+              seq: m.seq,
+              status: "ok",
+              result,
+            };
+            ctx.send(from, reply);
+            return;
+          }
+          base.onMessage(ctx, s, from, m);
+        },
+      };
+    },
+  };
+}
 
 /**
  * Deliberately broken Raft variants. They exist to prove that the invariant checker and the
@@ -88,6 +119,14 @@ export const RAFT_BUGS = {
       };
     },
   },
+  "leader-local-reads": localReads(
+    "The leader answers reads from its applied state without a log entry or a quorum check, so a deposed or lagging leader returns stale values.",
+    (s) => s.volatile.role === "leader",
+  ),
+  "session-reads": localReads(
+    "Any server that has applied a client's previous request answers its reads locally: the client always reads its own writes, but other clients' writes can be missing.",
+    (s, clientId, seq) => s.volatile.kv.sessions[clientId]?.seq === seq - 1,
+  ),
 } satisfies Record<string, BugSpec>;
 
 export type RaftBug = keyof typeof RAFT_BUGS;
