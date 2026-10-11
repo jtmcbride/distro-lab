@@ -73,6 +73,13 @@ export {
 } from "./harness/fuzz.ts";
 export { defaultRegistry } from "./harness/registry.ts";
 export {
+  clientHistory,
+  DEFAULT_HISTORY_FORMAT,
+  relativeTo,
+  type HistoryFormat,
+  type HistoryOp,
+} from "./harness/history.ts";
+export {
   DEFAULT_REQUEST_CLIENT_CONFIG,
   requestClient,
   type ClientMessage,

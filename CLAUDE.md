@@ -29,7 +29,7 @@ CHROMIUM_PATH=/path/to/chrome-headless-shell pnpm -C apps/web e2e   # use an alr
 # CLI (runs .ts directly on Node 22 via type stripping; no build step)
 pnpm sim list
 pnpm sim fuzz --seeds 1000 [--protocol raft|dynamo|<name>-bug-<bug>] [--out failures]
-pnpm sim run scenario.json [--trace | --tail N] [--state]
+pnpm sim run scenario.json [--trace | --tail N] [--state] [--history [--key K]]
 pnpm sim gen --seed 42
 pnpm sim example figure8                          # or sloppy-quorum --protocol dynamo
 ```

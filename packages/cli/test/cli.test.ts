@@ -56,6 +56,21 @@ describe("sim CLI", () => {
     ).toBe(true);
   });
 
+  it("prints the history around a linearizability violation", () => {
+    const dir = mkdtempSync(join(tmpdir(), "sim-"));
+    const file = join(dir, "s.json");
+    writeFileSync(file, cli("gen", "--seed", "2667", "--protocol", "raft-bug-session-reads").out);
+    const r = cli("run", file, "--history");
+    expect(r.code).toBe(1);
+    expect(r.out).toMatch(/^history of k0, up to the first violation: \d+ operations$/m);
+    // The read that failed, and the write it missed, which completed before it started.
+    expect(r.out).toMatch(/^ {2}FAILED .* c3#9 +get k0 +null$/m);
+    expect(r.out).toMatch(/^ {2}before .* c1#\d+ +put k0="c1-2890" +"c1-2890"$/m);
+    expect(r.out).toContain('it could only have returned "c1-2890"');
+    // Only the failing operation's key.
+    expect(r.out).not.toMatch(/^history of (?!k0)/m);
+  });
+
   it("prints and runs the Figure 8 example, showing final state", () => {
     const dir = mkdtempSync(join(tmpdir(), "sim-"));
     for (const protocol of ["raft", "raft-bug-commit-old-terms"]) {

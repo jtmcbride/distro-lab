@@ -5,6 +5,7 @@ import type { NodeId, Protocol } from "../protocol.ts";
 import { Simulation, type RunnableSimulation, type ScheduledAction } from "../simulation.ts";
 import { TraceRecorder, type TraceRecord, type TraceSink } from "../trace.ts";
 import type { Workload } from "./generate.ts";
+import type { HistoryFormat } from "./history.ts";
 import type { Rng } from "../rng.ts";
 
 export const SCENARIO_VERSION = 1;
@@ -49,6 +50,8 @@ export interface ProtocolEntry {
   readonly formatView?: (view: CanonicalValue) => string;
   /** Hand-written scenarios by name, e.g. "figure8". */
   readonly examples?: Readonly<Record<string, (protocol: string) => Scenario>>;
+  /** How client operations are grouped and printed; defaults to by `key`, as JSON. */
+  readonly history?: HistoryFormat;
   /** Builds a simulation for the scenario with its invariants attached. */
   build(
     scenario: Scenario,
@@ -81,6 +84,7 @@ export function defineProtocol<P, V, M, C, View, CP = never, CV = never>(spec: {
   stabilizeMs?: number;
   formatView?: (view: View) => string;
   examples?: Readonly<Record<string, (protocol: string) => Scenario>>;
+  history?: HistoryFormat;
 }): ProtocolEntry {
   return {
     name: spec.name,
@@ -92,6 +96,7 @@ export function defineProtocol<P, V, M, C, View, CP = never, CV = never>(spec: {
       ? {}
       : { formatView: spec.formatView as (view: CanonicalValue) => string }),
     ...(spec.examples === undefined ? {} : { examples: spec.examples }),
+    ...(spec.history === undefined ? {} : { history: spec.history }),
     build(scenario, options) {
       const clients = scenario.clients ?? [];
       if (clients.length > 0 && spec.client === undefined) {

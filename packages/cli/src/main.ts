@@ -3,13 +3,18 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
 import {
+  clientHistory,
+  DEFAULT_HISTORY_FORMAT,
   defaultRegistry,
   formatRecord,
+  relativeTo,
   fuzz,
   runScenario,
   scenarioForSeed,
+  type HistoryFormat,
   type RunResult,
   type Scenario,
+  type TraceRecord,
 } from "@distro-lab/core";
 
 const USAGE = `Usage: sim <command> [options]
@@ -23,6 +28,8 @@ Commands:
        [--trace] [--tail N]    Print the whole trace, or the last N records up to
                                the first violation
        [--state]               Print every process's final state
+       [--history] [--key K]   Print client operations per key, up to the first
+                               violation (only the failing operation's key, if any)
   fuzz [--protocol P]          Run generated scenarios and report failures
        [--seeds N] [--first S] [--nodes 3,5] [--max-failures K]
        [--out DIR] [--no-minimize]
@@ -53,6 +60,43 @@ function describeFailure(r: RunResult): string[] {
   if (r.violations.length > 5) lines.push(`  ... ${r.violations.length - 5} more violations`);
   for (const l of r.liveness) lines.push(`  LIVENESS ${l}`);
   return lines;
+}
+
+/**
+ * Client operations grouped by key, up to the first violation. If that violation is at an
+ * operation's completion, only its key is shown (unless `key` is given), and every other
+ * operation is marked by its real-time order relative to it.
+ */
+function printHistory(io: Io, r: RunResult, format: HistoryFormat, key: string | undefined): void {
+  const firstBad = r.violations[0]?.recordId ?? Infinity;
+  const ops = clientHistory((r.trace ?? []).filter((rec: TraceRecord) => rec.id <= firstBad));
+  const failing = ops.find((op) => op.completeRecord === firstBad);
+  const keys = [...new Set(ops.map((op) => format.partition(op.input)))].sort();
+  const shown =
+    key !== undefined ? [key] : failing !== undefined ? [format.partition(failing.input)] : keys;
+  const time = (t: number | null) => (t === null ? "pending" : t.toFixed(3)).padStart(10);
+  for (const k of shown) {
+    const mine = ops.filter((op) => format.partition(op.input) === k);
+    const scope = r.violations.length > 0 ? ", up to the first violation" : "";
+    io.out(`history of ${k === "" ? "(no key)" : k}${scope}: ${mine.length} operations`);
+    io.out(
+      `  ${failing === undefined ? "" : "        "}${"invoked".padStart(10)} ${"completed".padStart(10)}  op      operation                    result`,
+    );
+    for (const op of mine) {
+      const mark =
+        failing === undefined
+          ? ""
+          : op === failing
+            ? "FAILED  "
+            : relativeTo(op, failing) === "before"
+              ? "before  "
+              : "overlaps";
+      const result = op.output === null ? "?" : format.describeOutput(op.output);
+      io.out(
+        `  ${mark}${time(op.invokedAt)} ${time(op.completedAt)}  ${op.id.padEnd(7)} ${format.describeInput(op.input).padEnd(28)} ${result}`,
+      );
+    }
+  }
 }
 
 /** Runs the CLI; returns the process exit code (0 ok, 1 failure found, 2 usage error). */
@@ -107,6 +151,8 @@ export function main(argv: readonly string[], io: Io = nodeIo): number {
             trace: { type: "boolean", default: false },
             tail: { type: "string" },
             state: { type: "boolean", default: false },
+            history: { type: "boolean", default: false },
+            key: { type: "string" },
           },
         });
         const file = positionals[0];
@@ -114,14 +160,18 @@ export function main(argv: readonly string[], io: Io = nodeIo): number {
         const scenario = JSON.parse(readFileSync(file, "utf8")) as Scenario;
         const tail = values.tail === undefined ? undefined : int(values.tail, "tail", 0);
         const r = runScenario(registry, scenario, {
-          keepTrace: values.trace || tail !== undefined,
+          keepTrace: values.trace || tail !== undefined || values.history,
           keepState: values.state,
         });
-        if (r.trace !== undefined) {
+        if (r.trace !== undefined && (values.trace || tail !== undefined)) {
           const firstBad = r.violations[0]?.recordId ?? Infinity;
           const upTo = r.trace.filter((rec) => rec.id <= firstBad);
           const shown = tail === undefined ? r.trace : upTo.slice(-tail);
           for (const rec of shown) io.out(formatRecord(rec));
+        }
+        if (values.history) {
+          const format = registry.get(scenario.protocol)?.history ?? DEFAULT_HISTORY_FORMAT;
+          printHistory(io, r, format, values.key);
         }
         if (r.finalState !== undefined) {
           const format = registry.get(scenario.protocol)?.formatView;

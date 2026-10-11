@@ -32,6 +32,8 @@ pnpm sim list                                   # protocols and planted-bug vari
 pnpm sim fuzz --seeds 1000                      # chaos-test Raft across 1000 seeds
 pnpm sim fuzz --protocol raft-bug-stale-votes --out failures
 pnpm sim run failures/raft-bug-stale-votes-seed9.min.json --tail 20
+pnpm sim gen --seed 2667 --protocol raft-bug-session-reads > s.json
+pnpm sim run s.json --history                   # client operations on the failing key
 pnpm sim fuzz --protocol dynamo --seeds 1000    # chaos-test the Dynamo-style store
 pnpm sim example sloppy-quorum --protocol dynamo > s.json && pnpm sim run s.json --state
 pnpm sim gen --seed 42 > scenario.json          # inspect or hand-edit a scenario
