@@ -1,7 +1,6 @@
 import { ClusterView } from "./components/ClusterView.tsx";
 import { EventList } from "./components/EventList.tsx";
 import { Inspector } from "./components/Inspector.tsx";
-import { LogGrid } from "./components/LogGrid.tsx";
 import { RecordDetail } from "./components/RecordDetail.tsx";
 import { SpaceTime } from "./components/SpaceTime.tsx";
 import { Tools } from "./components/Tools.tsx";
@@ -12,10 +11,12 @@ import { Minimize } from "./components/Minimize.tsx";
 import { Explain } from "./components/Explain.tsx";
 import { ScenarioMenu } from "./components/ScenarioMenu.tsx";
 import { Violations } from "./components/Violations.tsx";
+import { useProtocolUi } from "./protocols/index.ts";
 import { useSim } from "./state/store.ts";
 
 export function App() {
   const { error } = useSim();
+  const ui = useProtocolUi();
   return (
     <div className="app">
       <header className="topbar">
@@ -38,9 +39,9 @@ export function App() {
           <h2>Inspector</h2>
           <Inspector />
         </section>
-        <section className="panel logs" aria-label="Replicated logs">
-          <h2>Replicated logs</h2>
-          <LogGrid />
+        <section className="panel logs" aria-label={ui.dataTitle}>
+          <h2>{ui.dataTitle}</h2>
+          <ui.DataPanel />
         </section>
         <section className="panel tools" aria-label="Fault and client tools">
           <h2>Tools</h2>

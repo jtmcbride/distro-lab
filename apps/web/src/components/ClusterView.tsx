@@ -1,12 +1,6 @@
 import { useRef, useState } from "react";
 import type { LinkNetworkView, ProcessState } from "@distro-lab/core";
-import {
-  clientCaption,
-  electionTimer,
-  MESSAGE_LEGEND,
-  messageStyle,
-  serverBadge,
-} from "../protocolUi.ts";
+import { clientCaption, useProtocolUi } from "../protocols/index.ts";
 import { sim } from "../sim/client.ts";
 import { inFlight } from "../state/inflight.ts";
 import { useSim } from "../state/store.ts";
@@ -48,6 +42,7 @@ function trim(a: Point, b: Point, by: number): [Point, Point] {
 
 export function ClusterView() {
   const { processes, network, now, speed, config, selectedProcess } = useSim();
+  const ui = useProtocolUi();
   useSim((s) => s.traceVersion);
   const [dragged, setDragged] = useState<Record<string, Point>>({});
   const svgRef = useRef<SVGSVGElement>(null);
@@ -68,7 +63,7 @@ export function ClusterView() {
 
   const links = (network as LinkNetworkView | null)?.links ?? [];
   const connected = new Map(links.map((l) => [`${l.from}>${l.to}`, l]));
-  const timer = electionTimer(config);
+  const timer = ui.ringTimer(config);
 
   const toSvg = (e: React.PointerEvent): Point => {
     const svg = svgRef.current!;
@@ -148,16 +143,18 @@ export function ClusterView() {
             >
               Isolate
             </button>
-            {selected.role === "server" && (
-              <button
-                type="button"
-                disabled={!selected.up}
-                onClick={() => sim.act({ type: "timeout", node: selected.id, key: timer.key })}
-                title="Fire this node's election timer now"
-              >
-                Force election
-              </button>
-            )}
+            {selected.role === "server" &&
+              ui.timerButtons.map((b) => (
+                <button
+                  key={b.key}
+                  type="button"
+                  disabled={!selected.up}
+                  onClick={() => sim.act({ type: "timeout", node: selected.id, key: b.key })}
+                  title={b.title}
+                >
+                  {b.label}
+                </button>
+              ))}
           </>
         )}
         <button
@@ -215,10 +212,10 @@ export function ClusterView() {
               </g>
             );
           }
-          const badge = serverBadge(p.view);
-          const election = p.timers.find((t) => t.key === timer.key);
+          const badge = ui.serverBadge(p.view);
+          const election = timer === null ? undefined : p.timers.find((t) => t.key === timer.key);
           const remaining =
-            election === undefined
+            election === undefined || timer === null
               ? 0
               : Math.max(0, Math.min(1, (election.at - now) / timer.maxMs));
           const ring = 2 * Math.PI * (NODE_R + 5);
@@ -238,7 +235,9 @@ export function ClusterView() {
                   strokeDasharray={`${ring * remaining} ${ring}`}
                   transform={`rotate(-90 ${c.x} ${c.y})`}
                 >
-                  <title>Election timeout in {(election.at - now).toFixed(0)} ms</title>
+                  <title>
+                    {election.key} timer fires in {(election.at - now).toFixed(0)} ms
+                  </title>
                 </circle>
               )}
               <circle cx={c.x} cy={c.y} r={NODE_R} />
@@ -259,7 +258,7 @@ export function ClusterView() {
           const [a, b] = trim(pos(m.from), pos(m.to), NODE_R);
           const f = m.arrival === m.t ? 1 : (now - m.t) / (m.arrival - m.t);
           const at = lerp(a, b, Math.max(0, Math.min(1, f)));
-          const style = messageStyle(m.message);
+          const style = ui.messageStyle(m.message);
           return (
             <circle
               key={m.key}
@@ -293,15 +292,17 @@ export function ClusterView() {
       </svg>
 
       <div className="legend" aria-label="Legend">
-        <span className="swatch role-leader">Leader</span>
-        <span className="swatch role-candidate">Candidate</span>
-        <span className="swatch role-follower">Follower</span>
-        {MESSAGE_LEGEND.map((m) => (
+        {ui.roles.map((r) => (
+          <span key={r.role} className={`swatch role-${r.role}`}>
+            {r.label}
+          </span>
+        ))}
+        {ui.messages.map((m) => (
           <span key={m.label} className="dot" style={{ ["--c" as string]: m.color }}>
             {m.label}
           </span>
         ))}
-        <span className="muted">Ring: time left before an election timeout</span>
+        {timer !== null && <span className="muted">{timer.label}</span>}
       </div>
     </div>
   );

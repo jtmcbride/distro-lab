@@ -1,88 +1,8 @@
-import type { ProcessState, Raft } from "@distro-lab/core";
+import type { ProcessState } from "@distro-lab/core";
+import { Field, useProtocolUi } from "../protocols/index.ts";
 import { useSim } from "../state/store.ts";
 import { trace } from "../state/trace.ts";
 import { formatMs } from "./PlaybackBar.tsx";
-
-const isRaft = (protocol: string) => protocol === "raft" || protocol.startsWith("raft-");
-
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <>
-      <dt>{label}</dt>
-      <dd>{children}</dd>
-    </>
-  );
-}
-
-function Timers({ p, now }: { p: ProcessState; now: number }) {
-  if (!p.up) return <span className="muted">none (down)</span>;
-  if (p.timers.length === 0) return <span className="muted">none</span>;
-  return (
-    <>
-      {p.timers.map((t) => (
-        <span key={t.key} className="pill">
-          {t.key} in {Math.max(0, t.at - now).toFixed(0)} ms
-        </span>
-      ))}
-    </>
-  );
-}
-
-function RaftServer({ p, now }: { p: ProcessState; now: number }) {
-  const v = p.view as Raft.RaftView;
-  const data = Object.entries(v.data).sort(([a], [b]) => a.localeCompare(b));
-  const sessions = Object.entries(v.sessions);
-  return (
-    <>
-      <dl className="fields">
-        <Field label="Status">
-          {p.up ? (
-            <strong className={`role-text role-${v.role}`}>{v.role}</strong>
-          ) : (
-            <strong className="bad">crashed</strong>
-          )}
-          {!p.up && <span className="muted"> (showing last state; volatile state is lost)</span>}
-        </Field>
-        <Field label="Term">{v.term}</Field>
-        <Field label="Voted for">{v.votedFor ?? "—"}</Field>
-        <Field label="Follows">{v.leaderId ?? "—"}</Field>
-        <Field label="Log">
-          {v.log.length} entries · committed to {v.commitIndex} · applied to {v.lastApplied}
-        </Field>
-        <Field label="Timers">
-          <Timers p={p} now={now} />
-        </Field>
-      </dl>
-      <h3>Key-value data</h3>
-      {data.length === 0 ? (
-        <p className="muted">Empty (state is rebuilt by applying committed entries).</p>
-      ) : (
-        <table className="kv">
-          <tbody>
-            {data.map(([k, val]) => (
-              <tr key={k}>
-                <th>{k}</th>
-                <td>{val}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
-      <h3>Client sessions</h3>
-      {sessions.length === 0 ? (
-        <p className="muted">None yet.</p>
-      ) : (
-        <p className="sessions">
-          {sessions.map(([c, seq]) => (
-            <span key={c} className="pill">
-              {c}: up to #{seq}
-            </span>
-          ))}
-        </p>
-      )}
-    </>
-  );
-}
 
 interface Op {
   seq: number;
@@ -111,15 +31,8 @@ function clientHistory(client: string): Op[] {
   return [...ops.values()].slice(-12).reverse();
 }
 
-const describeOp = (op: unknown) => {
-  const o = op as { type?: string; key?: string; value?: string; expect?: string | null };
-  if (o.type === "put") return `put ${o.key} = ${o.value}`;
-  if (o.type === "get") return `get ${o.key}`;
-  if (o.type === "cas") return `cas ${o.key}: ${o.expect ?? "∅"} → ${o.value}`;
-  return JSON.stringify(op);
-};
-
 function Client({ p }: { p: ProcessState }) {
+  const ui = useProtocolUi();
   const v = p.view as {
     nextSeq: number;
     queued: number;
@@ -135,7 +48,7 @@ function Client({ p }: { p: ProcessState }) {
         <Field label="In flight">{v.inFlight === null ? "—" : `#${v.inFlight}`}</Field>
         <Field label="Queued">{v.queued}</Field>
         <Field label="Completed">{v.completed}</Field>
-        <Field label="Leader hint">{v.leaderHint ?? "—"}</Field>
+        <Field label="Server hint">{v.leaderHint ?? "—"}</Field>
       </dl>
       <h3>Recent operations</h3>
       {history.length === 0 ? (
@@ -144,13 +57,13 @@ function Client({ p }: { p: ProcessState }) {
         <table className="ops">
           <tbody>
             {history.map((o) => {
-              const r = o.result as { ok: boolean; value: string | null } | undefined;
+              const r = o.result === undefined ? undefined : ui.describeResult(o.result as never);
               return (
                 <tr key={o.seq}>
                   <td>#{o.seq}</td>
-                  <td>{describeOp(o.op)}</td>
+                  <td>{ui.describeOp(o.op as never)}</td>
                   <td className={r === undefined ? "muted" : r.ok ? "good" : "bad"}>
-                    {r === undefined ? "pending" : `${r.ok ? "ok" : "failed"} → ${r.value ?? "∅"}`}
+                    {r === undefined ? "pending" : r.text}
                   </td>
                   <td className="muted">
                     {o.latencyMs === undefined ? "" : formatMs(o.latencyMs)}
@@ -168,25 +81,15 @@ function Client({ p }: { p: ProcessState }) {
 
 function Summary() {
   const { processes, violations } = useSim();
+  const ui = useProtocolUi();
   const servers = processes.filter((p) => p.role === "server");
   const up = servers.filter((p) => p.up);
-  const leaders = up.filter((p) => (p.view as { role?: string }).role === "leader");
-  const majority = Math.floor(servers.length / 2) + 1;
   return (
     <dl className="fields">
       <Field label="Servers up">
-        {up.length} of {servers.length}{" "}
-        {up.length >= majority ? (
-          <span className="good">(majority available)</span>
-        ) : (
-          <span className="bad">(no majority: no progress possible)</span>
-        )}
+        {up.length} of {servers.length}
       </Field>
-      <Field label="Leaders">
-        {leaders.length === 0
-          ? "none"
-          : leaders.map((l) => `${l.id} (t${(l.view as { term: number }).term})`).join(", ")}
-      </Field>
+      <ui.Summary />
       <Field label="Violations">
         {violations.length === 0 ? (
           <span className="good">none</span>
@@ -202,7 +105,8 @@ function Summary() {
 }
 
 export function Inspector() {
-  const { processes, selectedProcess, now, protocol } = useSim();
+  const { processes, selectedProcess, now } = useSim();
+  const ui = useProtocolUi();
   useSim((s) => s.traceVersion);
   const p = processes.find((x) => x.id === selectedProcess);
   if (p === undefined) return <Summary />;
@@ -211,13 +115,7 @@ export function Inspector() {
       <h3 className="inspector-title">
         {p.role === "server" ? "Server" : "Client"} {p.id}
       </h3>
-      {p.role === "client" ? (
-        <Client p={p} />
-      ) : isRaft(protocol) ? (
-        <RaftServer p={p} now={now} />
-      ) : (
-        <pre>{JSON.stringify(p.view, null, 2)}</pre>
-      )}
+      {p.role === "client" ? <Client p={p} /> : <ui.ServerDetail p={p} now={now} />}
     </div>
   );
 }

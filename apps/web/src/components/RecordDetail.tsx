@@ -1,6 +1,6 @@
 import { formatRecord, processOf } from "@distro-lab/core";
 import { explain } from "../state/cone.ts";
-import { messageStyle } from "../protocolUi.ts";
+import { useProtocolUi } from "../protocols/index.ts";
 import { useSim } from "../state/store.ts";
 import { recordById } from "../state/trace.ts";
 import { causalChain } from "../state/causes.ts";
@@ -10,6 +10,7 @@ import { formatMs } from "./PlaybackBar.tsx";
 /** Details of the selected trace record; for a message, its payload and fate. */
 export function RecordDetail() {
   const { selectedRecord } = useSim();
+  const ui = useProtocolUi();
   useSim((s) => s.traceVersion);
   if (selectedRecord === null) {
     return <p className="muted">Click a message (in the cluster or the diagram) or an event.</p>;
@@ -26,7 +27,7 @@ export function RecordDetail() {
       </div>
     );
   }
-  const style = messageStyle(r.message);
+  const style = ui.messageStyle(r.message);
   const outcomes = outcomesOf(r);
   return (
     <div className="record-detail">

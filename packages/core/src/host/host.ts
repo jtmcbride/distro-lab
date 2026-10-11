@@ -50,9 +50,16 @@ export type ScenarioAction = Scenario["actions"][number];
 
 /** Labels of annotations worth stopping at when stepping. */
 export const NOTABLE_LABELS: ReadonlySet<string> = new Set([
+  // Raft
   "electionStarted",
   "becameLeader",
   "steppedDown",
+  // Dynamo
+  "fallback",
+  "unavailable",
+  "readRepair",
+  "handedOff",
+  // Clients
   "complete",
 ]);
 

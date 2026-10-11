@@ -43,6 +43,7 @@ export {
   type Violation,
 } from "./invariants.ts";
 export * as Raft from "./protocols/raft/index.ts";
+export * as Dynamo from "./protocols/dynamo/index.ts";
 export {
   defineProtocol,
   failed,
@@ -70,6 +71,7 @@ export {
   type ClientReply,
   type ClientRequest,
   type RequestClientConfig,
+  type RequestClientHooks,
   type RequestClientPersistent,
   type RequestClientView,
   type RequestClientVolatile,

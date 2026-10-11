@@ -169,9 +169,85 @@ crashed node does not vote or store an entry), so the explanation also follows d
 messages back to the crash or link cut that dropped them. And `acknowledged-writes-replicated`
 now reports every server, since its claim ("only 2 of 5 store it") reads every log.
 
+## Phase 5 — Eventual consistency (Dynamo-style)
+
+Goal: a leaderless, Dynamo-style replicated store (consistent hashing, N/R/W quorums,
+vector-clock versions with siblings, sloppy quorums, hinted handoff, read repair,
+anti-entropy) whose checkers state precisely which guarantees each configuration keeps, then
+CRDT values whose siblings merge automatically.
+
+Design decisions:
+
+- **Any server coordinates.** The server a client contacts runs the request against the key's
+  preference list (no forwarding to the list's first node). Clients are the same
+  `requestClient`, which also learns an `unavailable` reply.
+- **Placement is a pure function of the key and the server set**: a consistent-hash ring with
+  a few tokens per server, hashed from server ids (not the seed). The first N distinct servers
+  clockwise are the key's replicas; the rest, in order, are its fallbacks.
+- **Versions are dotted version vectors** (Preguiça et al., 2010): `{value, dot, context,
+write}`, where the dot is the coordinator plus a fresh value of its persistent counter, the
+  context is the merged history the writer had read, and `write` is the client's
+  `(clientId, seq)`. A version replaces exactly the versions its context includes. Plain
+  vector clocks are wrong when any server coordinates: two writes through one coordinator
+  get `{A:1}` and `{A:2}`, and the second would silently replace the first even if its writer
+  never saw it. Contexts are exact dot sets (a version vector plus individual dots, kept
+  compact by per-key coordinator counters) for the same reason: having seen a coordinator's
+  write 12 does not mean having seen its write 11. Plain clock comparison, vector contexts
+  and the naive `context[coordinator] + 1` stamp are all planted bugs.
+- **No failure detector.** Coordinators send to the first N, and on timeout either fall back
+  to the next servers on the ring with a hint (sloppy quorum) or reply `unavailable` (strict).
+  Hints are stored durably, apart from data, and handed off when the intended owner answers.
+- **Anti-entropy by flat per-key digests**, pairwise with a random peer on a timer. Merkle
+  trees would only matter at sizes the simulator does not reach.
+- **Guarantees are checked per configuration.** Safety that always holds (no acknowledged
+  write lost, a dot identifies one write, siblings are concurrent, replicas never regress,
+  reads return only written values) is checked after every event. Read-sees-acknowledged-write
+  is checked only for strict quorums with R + W > N, which promise it; sloppy quorums do not,
+  and a scripted example shows why. Liveness: after heal, every key's replicas converge,
+  hints drain, and all client operations complete.
+- **Retries are not deduplicated.** A retried put through another coordinator can become a
+  sibling of itself (same value, different dot), as in Dynamo. No deletes (tombstones).
+
+| #   | Work                                                                                                                                                      | Exit criterion                                                                                        | Status |
+| --- | --------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- | ------ |
+| 1   | Vector clocks and version sets (compare, merge, sibling rules); consistent-hash ring and preference lists                                                 | Property tests: merge is a join (commutative, associative, idempotent), drops only dominated versions | done   |
+| 2   | Dynamo core: coordinator get/put with N/R/W, strict quorums, persistent clock counter, replica store, `unavailable`; client fills contexts from its reads | Concurrent puts make siblings; a put with a read's context replaces them                              | done   |
+| 3   | Sloppy quorum and hinted handoff, read repair, anti-entropy                                                                                               | After a partition heals all replicas converge and hints drain; unit test per mechanism                | done   |
+| 4   | Invariants: acknowledged writes durable, unique dots, siblings concurrent, replicas monotonic, reads return written values, reads see acknowledged writes | Each fires on a hand-built violating history                                                          | done   |
+| 5   | Registry entry, workload, random config (N, R, W, sloppy), convergence liveness                                                                           | 10k seeds clean                                                                                       | done   |
+| 6   | Planted bugs: reused counter, volatile counter, last-writer-wins, plain vector clocks, vector contexts, early ack, overwriting read repair                | Each caught by the fuzzer and minimized                                                               | done   |
+| 7   | Scripted examples: concurrent writes make siblings; sloppy quorum stale read vs strict quorum unavailability                                              | Tests assert each outcome                                                                             | done   |
+| 8   | CRDT values: grow-only counters and observed-remove sets merged by join; client increment/add/remove; checks for counter bounds and acknowledged adds     | Planted double-counting and remove-everything bugs are caught                                         | done   |
+| 9   | Performance and tooling: incremental checks, `formatView`, `sim run --state`                                                                              | ≥ 40k events/s; step 6 failures are understandable from the CLI                                       | done   |
+| 10  | UI: per-protocol UI modules; replica grid (keys × servers, siblings, clocks, hints), inspector, client form, ring placement, examples in the menu         | Siblings visibly appear and resolve in the concurrent-writes example                                  | done   |
+| 11  | Hardening: e2e, docs, results                                                                                                                             | CI green                                                                                              | done   |
+
+Out of scope: dynamic membership and ring rebalancing, deletes, Merkle trees, clock pruning,
+coordinator forwarding.
+
+**Phase 5 result:** 10,000 generated scenarios with registers, counters and sets under random
+N/R/W, sloppy or strict quorums (8.1M events, 74k events/s) with zero safety or liveness
+failures. All nine planted bugs are caught by fuzzing within 25 seeds (first failing seeds
+0–24) and minimized. Checkpoints round-trip for Dynamo as for Raft. The examples show siblings
+appearing and resolving, and a sloppy quorum acknowledging a write that a later read misses,
+where a strict quorum is unavailable instead.
+
+Findings:
+
+- **The first fuzz run found a design bug.** Contexts kept as version vectors claim more than
+  the writer saw: having read a coordinator's write 12 is not having read its concurrent write
+  11, so a put silently replaced two acknowledged writes. Dotted versions alone do not fix
+  this; the context must be an exact dot set. That behavior is now a planted bug.
+- **Liveness, not safety, needed tuning.** Random anti-entropy partners left pairs unsynced for
+  seconds, coordinators gave up after one lost message, and long client timeouts let backlogs
+  outlast the fault-free tail. Partners are now taken in turn, coordinators ask twice, and
+  Dynamo asks for a 12s tail (every operation is a quorum round trip).
+- **Retries cause sibling explosion.** A put retried through another coordinator is a new
+  version, so a lossy, strict, W=3 run left 32 copies of two values as siblings. This is
+  Dynamo's real behavior and is left visible.
+
 ## Later phases
 
-5. Eventual-consistency protocol (Dynamo-style), then vector clocks/CRDTs.
 6. Linearizability checking (Porcupine-style) for the KV store; docs, tutorials, GitHub Pages.
 
 Explicitly excluded from the first release: dynamic membership, snapshots/compaction,

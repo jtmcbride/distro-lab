@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { messageStyle } from "../protocolUi.ts";
+import { useProtocolUi } from "../protocols/index.ts";
 import { useSim } from "../state/store.ts";
 import { trace } from "../state/trace.ts";
 import { chainSends } from "../state/causes.ts";
@@ -38,6 +38,7 @@ export function SpaceTime() {
   const [msPerPx, setMsPerPx] = useState(1);
   const [pinnedEnd, setPinnedEnd] = useState<number | null>(null); // null = follow playhead
   const [hideHeartbeats, setHideHeartbeats] = useState(false);
+  const ui = useProtocolUi();
   const pan = useRef<{ x: number; end: number; moved: boolean } | null>(null);
 
   const ids = processes.map((p) => p.id);
@@ -150,7 +151,7 @@ export function SpaceTime() {
     for (let i = from; i < to; i++) {
       const r = trace[i]!;
       if (r.type !== "send") continue;
-      const style = messageStyle(r.message);
+      const style = ui.messageStyle(r.message);
       if (hideHeartbeats && style.minor) continue;
       const y1 = row.get(r.from);
       const y2 = row.get(r.to);
@@ -217,6 +218,7 @@ export function SpaceTime() {
     selectedRecord,
     explain,
     hideHeartbeats,
+    ui,
     processes,
     ids,
   ]);
@@ -251,7 +253,7 @@ export function SpaceTime() {
             checked={hideHeartbeats}
             onChange={(e) => setHideHeartbeats(e.target.checked)}
           />
-          Hide heartbeats
+          {ui.minorLabel}
         </label>
         <span className="muted">
           {(plotW * msPerPx).toLocaleString(undefined, { maximumFractionDigits: 0 })} ms shown ·
