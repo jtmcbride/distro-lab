@@ -44,6 +44,8 @@ export type TraceRecord =
   | (Base & { readonly type: "recover"; readonly node: NodeId })
   | (Base & { readonly type: "client"; readonly node: NodeId; readonly command: CanonicalValue })
   | (Base & { readonly type: "network"; readonly change: CanonicalValue })
+  /** A scenario action set `node`'s clock rate. */
+  | (Base & { readonly type: "clock"; readonly node: NodeId; readonly rate: number })
   | (Base & {
       readonly type: "annotate";
       readonly node: NodeId;
@@ -102,6 +104,8 @@ export function formatRecord(r: TraceRecord): string {
       return `${head} client ${r.node} ${canonicalJson(r.command)}`;
     case "network":
       return `${head} network ${canonicalJson(r.change)}`;
+    case "clock":
+      return `${head} clock ${r.node} rate=${r.rate}`;
     case "annotate":
       return `${head} ${r.node} ${r.label}${r.data === undefined ? "" : ` ${canonicalJson(r.data)}`}`;
   }

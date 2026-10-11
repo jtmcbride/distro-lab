@@ -3,9 +3,12 @@ import { currentCone } from "../state/cone.ts";
 import { useSim } from "../state/store.ts";
 import { trace } from "../state/trace.ts";
 
-/** Crashes, recoveries and forced timeouts: what a scenario does to processes. */
+/** Crashes, recoveries, clock changes and forced timeouts: what a scenario does to processes. */
 const isFault = (r: TraceRecord) =>
-  r.type === "crash" || r.type === "recover" || (r.type === "timer" && r.cause === null);
+  r.type === "crash" ||
+  r.type === "recover" ||
+  r.type === "clock" ||
+  (r.type === "timer" && r.cause === null);
 
 /** Summary of the causal past being explained; the other views dim everything outside it. */
 export function Explain() {

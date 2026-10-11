@@ -20,8 +20,16 @@ export interface NodeContext<M> {
   readonly nodeId: NodeId;
   /** All other nodes in the cluster, in a stable order. */
   readonly peers: readonly NodeId[];
-  /** Current virtual time. */
+  /**
+   * Current true (virtual) time. For measuring durations a real process could observe, such
+   * as lease expiry, use `localNow`: this node's clock, which may drift.
+   */
   readonly now: number;
+  /**
+   * This node's local clock: monotonic, 0 at the start of the run, advancing at the node's
+   * clock rate. Timer delays are in this clock's time.
+   */
+  readonly localNow: number;
   /** This node's private random stream. */
   readonly rng: Rng;
   send(to: NodeId, message: M): void;

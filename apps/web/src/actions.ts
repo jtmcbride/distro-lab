@@ -8,6 +8,8 @@ export function describeAction({ action: a }: ScenarioAction): string {
       return `${a.type} ${a.node}`;
     case "timeout":
       return `fire ${a.node}'s ${a.key} timer`;
+    case "clock":
+      return `${a.node}'s clock runs at ${a.rate}×`;
     case "client":
       return `${a.node}: ${canonicalJson(a.command as CanonicalValue)}`;
     case "network": {

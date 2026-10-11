@@ -311,7 +311,46 @@ Findings:
 - **Tutorial text drifts like code**, so it is tested like code: the claim test caught a
   wrong retry count while the tours were being written.
 
+## Phase 7 — Fast reads and clocks
+
+Goal: serve Raft reads without a log write, by ReadIndex (one heartbeat round) and by leader
+leases (no round trip, but correct only while clocks drift within a stated bound), with
+drifting per-node clocks in the engine so the lease's assumption can hold or be broken, and
+the linearizability check from phase 6 as the judge.
+
+Design decisions:
+
+- **Each process has a local clock**: monotonic, starting at 0, running at a rate relative to
+  true time (1 by default). Timers are set in local time, so a timer of `d` ms fires after
+  `d / rate` true ms; `ctx.localNow` reads the local clock and `ctx.now` stays true time
+  (protocols that care about clocks must use `localNow`). At rate 1 nothing changes:
+  existing traces are byte-identical.
+- **Rates are part of the scenario**, not drawn by the engine: `clockRates` gives initial
+  rates and a `clock` action changes one mid-run (re-arming the node's pending timers by
+  their remaining local time). The generator draws them, so no existing RNG stream moves.
+  Clocks keep running while a process is down. Offsets and wall-clock jumps are not
+  modeled: leases measure durations, which a monotonic clock gives.
+- **Read mode is protocol config**: `readMode: "log" | "readIndex" | "lease"`, so the fuzzer
+  covers all three and branches can compare them on one scenario.
+- **A lease is safe only under an assumption, and scenarios state it.** The lease length
+  accounts for `maxDriftPpm`; the generator keeps drift within it, and drift beyond it is a
+  separate fault class that a correct lease is expected to fail under (an example shows
+  how). Followers refuse to vote while they have heard from a leader within the minimum
+  election timeout, which is what lets a lease outlive a partition safely.
+
+| #   | Work                                                                                                                     | Exit criterion                                                          | Status |
+| --- | ------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------- | ------ |
+| 1   | Engine: per-process drifting clocks, `clockRates`, `clock` action, `ctx.localNow`, timers in local time, semantics doc   | Same trace hashes at rate 1; property tests on timer firing under drift | done   |
+| 2   | ReadIndex                                                                                                                | 10k seeds linearizable; reads add no log entries                        | todo   |
+| 3   | Leader leases with drift-aware expiry; followers' vote check                                                             | 10k seeds linearizable with drift inside the bound                      | todo   |
+| 4   | Generator: clock rates and rate changes; planted bugs (lease ignoring drift, ReadIndex without the heartbeat round, ...) | Each caught by the linearizability check and minimized                  | todo   |
+| 5   | Metrics: read latency and log entries per read for each mode, in the CLI                                                 | `log` > `readIndex` > `lease` in read latency on the same scenarios     | todo   |
+| 6   | UI: local clocks and lease state in the inspector, read mode and clock tools, lease-vs-drift example and tutorial        | The tutorial's claims pass `tours.test.ts`                              | todo   |
+| 7   | Hardening: e2e, docs, results                                                                                            | CI green                                                                | todo   |
+
+Out of scope: clock offsets and jumps, lease handoff, follower reads, slow processing (GC
+pauses), clocks for Dynamo (it orders writes by dotted versions, not time).
+
 ## Later phases
 
-Explicitly excluded from the first release: dynamic membership, snapshots/compaction,
-linearizable-read optimizations, real sockets, Byzantine faults.
+Not planned yet: dynamic membership, snapshots/compaction, real sockets, Byzantine faults.

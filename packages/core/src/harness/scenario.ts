@@ -27,6 +27,11 @@ export interface Scenario {
   readonly config?: CanonicalValue;
   /** Covers servers and clients. */
   readonly network: LinkNetworkConfig;
+  /**
+   * Initial local clock rates by process (1 if absent); `clock` actions change them. See
+   * docs/semantics.md.
+   */
+  readonly clockRates?: Readonly<Record<NodeId, number>>;
   readonly actions: readonly ScheduledAction<CanonicalValue, NetworkChange>[];
   readonly durationMs: number;
   /**
@@ -112,6 +117,7 @@ export function defineProtocol<P, V, M, C, View, CP = never, CV = never>(spec: {
         network: new LinkNetwork([...scenario.nodes, ...clients], scenario.network),
         actions: scenario.actions as readonly ScheduledAction<C, NetworkChange>[],
         sinks: options?.sinks ?? [],
+        ...(scenario.clockRates === undefined ? {} : { clockRates: scenario.clockRates }),
       });
       const monitor = new InvariantMonitor<View>(sim, spec.invariants(scenario.config));
       return {

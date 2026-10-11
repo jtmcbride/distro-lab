@@ -57,10 +57,12 @@ Bottom up:
   volatile state, and `protocol.recover(ctx, persistent)` rebuilds it. Messages are serialized
   on send and parsed per delivered copy. Every event records its cause. Actions: `crash`,
   `recover`, `client`, `timeout` (fire a timer now, for scripting exact interleavings),
-  `network`. Scenario actions run before protocol events at the same instant.
+  `network`, `clock` (set a node's clock rate; initial rates are the scenario's
+  `clockRates`). Scenario actions run before protocol events at the same instant.
 - **Protocol interface** (`protocol.ts`): callbacks (`init`, `recover`, `onMessage`, `onTimer`,
   `onClientCommand`) mutate their own node state and request effects through `ctx` (`send`,
-  `setTimer`, `cancelTimer`, `annotate`), applied after the callback returns. `view(state)` is
+  `setTimer`, `cancelTimer`, `annotate`), applied after the callback returns. `ctx.now` is
+  true time; `ctx.localNow` is the node's drifting local clock, and timer delays are local. `view(state)` is
   the plain-data view invariants and the UI see; invariants never read internal state. Node
   state must be plain structured-clonable data, because checkpoints copy it.
 - **Network** (`linkNetwork.ts`): directed links (latency, jitter, loss, duplication, up), plus

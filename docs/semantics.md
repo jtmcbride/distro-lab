@@ -13,6 +13,22 @@ meaningful relative to them, so changes here are breaking changes.
   added, so a live session and its replay order events identically. Live actions are
   stamped 1µs after the last processed instant.
 
+## Clocks
+
+- Every process has a **local clock**: monotonic, reading 0 at the start of the run, and
+  advancing at a rate relative to true time (1 unless the scenario's `clockRates` says
+  otherwise). Handlers read it as `ctx.localNow`; `ctx.now` is true time, which no real
+  process can observe, so a protocol that reasons about durations (leases) must use
+  `localNow`.
+- **Timer delays are local time**: a timer of `d` ms on a clock running at rate `r` fires
+  after `d / r` true ms.
+- A `clock` action sets a process's rate from that instant. Its armed timers are re-armed so
+  each still fires once the local clock has advanced by the rest of its delay.
+- Clocks keep running while a process is down. Offsets and jumps (a wall clock being set)
+  are not modeled.
+- Event times and clock readings are rounded to microseconds, so a timer fires within a few
+  microseconds of local time of its delay.
+
 ## Handlers
 
 - Each protocol callback (`init`, `recover`, `onMessage`, `onTimer`, `onClientCommand`) is
@@ -103,5 +119,5 @@ the drop is a cause. A violation's past is taken over all the processes it names
 
 ## Not modeled (yet)
 
-Slow node processing, clock drift, disk faults and delayed persistence, bandwidth,
-Byzantine behavior.
+Slow node processing (e.g. GC pauses), clock offsets and jumps, disk faults and delayed
+persistence, bandwidth, Byzantine behavior.

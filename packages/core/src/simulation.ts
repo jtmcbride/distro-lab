@@ -15,7 +15,12 @@ export type Action<C, N> =
    * election. Ignored if the node is down. Used to script exact scenarios.
    */
   | { readonly type: "timeout"; readonly node: NodeId; readonly key: string }
-  | { readonly type: "network"; readonly change: N };
+  | { readonly type: "network"; readonly change: N }
+  /**
+   * From now on, `node`'s local clock runs at `rate` times true time. Its armed timers are
+   * re-armed so each still fires after its remaining local time.
+   */
+  | { readonly type: "clock"; readonly node: NodeId; readonly rate: number };
 
 export interface ScheduledAction<C, N> {
   readonly atMs: number;
@@ -40,6 +45,25 @@ export interface SimulationOptions<P, V, M, C, N, CP = never, CV = never> {
   readonly network: Network<N>;
   readonly actions?: readonly ScheduledAction<C, N>[];
   readonly sinks?: readonly TraceSink[];
+  /** Initial local clock rates (relative to true time) by process; 1 if absent. */
+  readonly clockRates?: Readonly<Record<NodeId, number>>;
+}
+
+/**
+ * A process's local clock: monotonic, 0 at the start of the run, reading `local` at true time
+ * `since` and advancing `rate` local ms per true ms.
+ */
+interface LocalClock {
+  readonly rate: number;
+  readonly local: number;
+  readonly since: number;
+}
+
+/** An armed timer: the queued firing that is still valid, and the record that armed it. */
+interface ArmedTimer {
+  readonly id: number;
+  readonly at: number;
+  readonly cause: number;
 }
 
 type Pending<C, N> =
@@ -74,7 +98,8 @@ interface NodeRuntime<M, C> {
   incarnation: number;
   state: NodeState<unknown, unknown>;
   /** Armed timers: key -> the firing that is still valid. */
-  timers: Map<string, { readonly id: number; readonly at: number }>;
+  timers: Map<string, ArmedTimer>;
+  clock: LocalClock;
 }
 
 type Effect<M> =
@@ -104,6 +129,18 @@ function at(now: number, delayMs: number): number {
   return Math.round((now + delayMs) * 1000) / 1000;
 }
 
+/** Local clock reading at true time `t`, rounded to microseconds like event times. */
+function localNow(c: LocalClock, t: number): number {
+  return Math.round((c.local + (t - c.since) * c.rate) * 1000) / 1000;
+}
+
+function checkRate(rate: number, node: NodeId): number {
+  if (!Number.isFinite(rate) || rate <= 0) {
+    throw new RangeError(`clock rate for ${node} must be positive, got ${rate}`);
+  }
+  return rate;
+}
+
 /**
  * A simulation's mutable state between steps. `saveState` returns live references, so the
  * caller deep-copies it (see snapshot.ts) and `loadState` takes ownership of what it gets.
@@ -124,8 +161,9 @@ export interface SimulationState {
     readonly up: boolean;
     readonly incarnation: number;
     readonly state: NodeState<unknown, unknown>;
-    readonly timers: Map<string, { readonly id: number; readonly at: number }>;
+    readonly timers: Map<string, ArmedTimer>;
     readonly rng: RngState;
+    readonly localClock: LocalClock;
   }[];
 }
 
@@ -136,6 +174,8 @@ export interface RunnableSimulation extends Observable {
   readonly nextEventTime: number | undefined;
   roleOf(id: NodeId): ProcessRole;
   timers(node: NodeId): { key: string; at: number }[];
+  /** A process's local clock reading now, and its current rate. */
+  localClock(node: NodeId): { readonly now: number; readonly rate: number };
   networkView(): CanonicalValue | null;
   step(): boolean;
   runUntil(timeMs: number): void;
@@ -211,6 +251,7 @@ export class Simulation<
         // Filled in by init below.
         state: undefined as unknown as NodeState<unknown, unknown>,
         timers: new Map(),
+        clock: { rate: checkRate(options.clockRates?.[id] ?? 1, id), local: 0, since: 0 },
       });
     };
     for (const id of ids) {
@@ -220,6 +261,9 @@ export class Simulation<
         options.protocol as Protocol<unknown, unknown, M, C>,
         ids.filter((o) => o !== id),
       );
+    }
+    for (const id of Object.keys(options.clockRates ?? {})) {
+      if (!all.includes(id)) throw new Error(`clock rate for unknown process ${id}`);
     }
     if (options.clients !== undefined) {
       const clientProtocol = options.clients.protocol as Protocol<unknown, unknown, M, C>;
@@ -296,6 +340,11 @@ export class Simulation<
     return [...this.runtime(node).timers].map(([key, t]) => ({ key, at: t.at }));
   }
 
+  localClock(node: NodeId): { readonly now: number; readonly rate: number } {
+    const c = this.runtime(node).clock;
+    return { now: localNow(c, this.clock), rate: c.rate };
+  }
+
   /** The network's own description of its state, if it provides one. */
   networkView(): CanonicalValue | null {
     return this.network.view?.() ?? null;
@@ -352,6 +401,7 @@ export class Simulation<
       throw new RangeError(`cannot schedule at ${atMs}ms (now ${this.clock}ms)`);
     }
     if (action.type !== "network") this.runtime(action.node);
+    if (action.type === "clock") checkRate(action.rate, action.node);
     // Round-trip through canonical JSON so the logged action is plain data and the caller
     // cannot mutate it later.
     const stored = JSON.parse(canonicalJson(action)) as Action<C, N>;
@@ -387,6 +437,7 @@ export class Simulation<
         state: r.state,
         timers: r.timers,
         rng: r.rng.getState(),
+        localClock: r.clock,
       })),
     };
   }
@@ -411,6 +462,7 @@ export class Simulation<
       r.state = p.state;
       r.timers = p.timers;
       r.rng.setState(p.rng);
+      r.clock = p.localClock;
     }
   }
 
@@ -512,7 +564,25 @@ export class Simulation<
         this.emit({ type: "network", t, cause: null, change: action.change as CanonicalValue });
         this.network.apply(action.change);
         return;
+      case "clock": {
+        const r = this.runtime(action.node);
+        const old = r.clock;
+        r.clock = { rate: action.rate, local: localNow(old, t), since: t };
+        this.emit({ type: "clock", t, cause: null, node: r.id, rate: action.rate });
+        // Each armed timer still has the same local time to go; re-arm it at the new rate.
+        for (const [key, timer] of [...r.timers].sort(([a], [b]) => (a < b ? -1 : 1))) {
+          const remainingLocal = (timer.at - t) * old.rate;
+          this.armTimer(r, key, at(t, remainingLocal / action.rate), timer.cause);
+        }
+        return;
+      }
     }
+  }
+
+  private armTimer(r: NodeRuntime<M, C>, key: string, fireAt: number, cause: number): void {
+    const timerId = this.nextTimerId++;
+    r.timers.set(key, { id: timerId, at: fireAt, cause });
+    this.queue.push(fireAt, { kind: "timer", node: r.id, key, timerId, cause }, PROTOCOL);
   }
 
   private deliver(from: NodeId, to: NodeId, wire: string, send: number): void {
@@ -546,12 +616,16 @@ export class Simulation<
   private invoke(r: NodeRuntime<M, C>, cause: number, body: (ctx: NodeContext<M>) => void): void {
     const effects: Effect<M>[] = [];
     const clock = () => this.clock;
+    const local = () => localNow(r.clock, this.clock);
     const checkNode = (id: NodeId) => this.runtime(id);
     const ctx: NodeContext<M> = {
       nodeId: r.id,
       peers: r.peers,
       get now() {
         return clock();
+      },
+      get localNow() {
+        return local();
       },
       rng: r.rng,
       send(to, message) {
@@ -615,16 +689,10 @@ export class Simulation<
           }
           break;
         }
-        case "setTimer": {
-          const timerId = this.nextTimerId++;
-          r.timers.set(e.key, { id: timerId, at: at(t, e.delayMs) });
-          this.queue.push(
-            at(t, e.delayMs),
-            { kind: "timer", node: r.id, key: e.key, timerId, cause },
-            PROTOCOL,
-          );
+        case "setTimer":
+          // Delays are in local time.
+          this.armTimer(r, e.key, at(t, e.delayMs / r.clock.rate), cause);
           break;
-        }
         case "cancelTimer":
           r.timers.delete(e.key);
           break;

@@ -27,6 +27,7 @@ function kindOf(r: TraceRecord): Kind {
     case "crash":
     case "recover":
     case "network":
+    case "clock":
       return "faults";
     case "client":
       return "clients";
