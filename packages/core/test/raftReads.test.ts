@@ -93,3 +93,51 @@ describe("ReadIndex", () => {
     expect(() => Raft.raft({ readMode: "fast" as Raft.ReadMode })).toThrow(/invalid Raft config/);
   });
 });
+
+describe("leases", () => {
+  it("serve reads in one client round trip, without log entries", () => {
+    const { r, ops, leader } = run(calm("lease"));
+    expect(r.violations).toEqual([]);
+    const read = ops[1]!;
+    expect(read.output).toEqual({ ok: true, value: "1" });
+    expect(read.completedAt! - read.invokedAt).toBe(20);
+    expect(leader.log.filter((e) => e.command.kind === "client")).toHaveLength(2);
+    const served = annotations(r.trace!, "readServed").map((x) => (x as { data?: unknown }).data);
+    expect(served).toEqual([
+      expect.objectContaining({ by: "lease" }),
+      expect.objectContaining({ by: "lease" }),
+    ]);
+  });
+
+  it("are safe while clocks drift within the assumed bound", () => {
+    for (const rate of [0.95, 1, 1.05]) {
+      const { r, ops } = run(Raft.leaseDriftScenario("raft", rate));
+      expect(r.violations).toEqual([]);
+      const read = ops.filter((op) => op.client === "c2").at(-1)!;
+      expect(read.output).toEqual({ ok: true, value: "2" });
+      expect(read.completedAt).toBeGreaterThan(3000);
+    }
+  });
+
+  it("break when the leader's clock runs slower than assumed: a stale read", () => {
+    const r = runScenario(registry, Raft.leaseDriftScenario("raft", 0.2), { keepTrace: true });
+    const read = clientHistory(r.trace!)
+      .filter((op) => op.client === "c2")
+      .at(-1)!;
+    expect(read.output).toEqual({ ok: true, value: "1" });
+    expect(r.violations.map((v) => v.invariant)).toEqual(["linearizable"]);
+    expect(r.violations[0]!.message).toContain('could only have returned "2"');
+  });
+
+  it("make followers ignore candidates while they hear from a leader", () => {
+    // B's forced election at 410 comes 10ms after the partition: C, D and E heard from A
+    // within the minimum election timeout, so they ignore it (and keep their term).
+    const s = withMode(Raft.staleReadScenario("raft"), "lease");
+    const r = runScenario(registry, s, { keepTrace: true, keepState: true });
+    const view = (n: string) =>
+      r.finalState!.find((p) => p.id === n)!.view as unknown as Raft.RaftView;
+    const started = annotations(r.trace!, "becameLeader").map((x) => (x as { node: string }).node);
+    expect(started).toEqual(["A"]);
+    expect(view("C").term).toBe(1);
+  });
+});

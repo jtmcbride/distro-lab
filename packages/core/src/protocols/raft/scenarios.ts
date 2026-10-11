@@ -129,3 +129,50 @@ export function staleReadScenario(protocol = "raft-bug-leader-local-reads"): Sce
     durationMs: 5000,
   };
 }
+
+/**
+ * A lease outlives its leader because the leader's clock runs slow. A leads term 1 with
+ * leases (assuming 5% drift); c2 reads x=1 through it. A partition leaves A alone with c2 at
+ * 400ms; the majority elects a new leader once their vote stickiness expires, and c1 writes
+ * x=2 through it (acknowledged at 890ms). At 900ms c2 reads x through A.
+ *
+ * At `leaderClockRate` 0.2, far outside the assumed bound, A's clock says its lease (taken
+ * from a round sent at 280ms) still runs, so A answers 1: a stale read. Within the bound
+ * (e.g. 0.95) the lease has expired, the read needs a heartbeat round A cannot complete, and
+ * it is served after the heal with 2.
+ */
+export function leaseDriftScenario(protocol = "raft", leaderClockRate = 0.2): Scenario {
+  const config: Partial<RaftConfig> = {
+    readMode: "lease",
+    maxDriftPpm: 50_000,
+    electionTimeoutMinMs: 150,
+    electionTimeoutMaxMs: 300,
+  };
+  const actions: Step[] = [
+    timeout(10, "A"),
+    at(100, { type: "client", node: "c1", command: { type: "put", key: "x", value: "1" } }),
+    at(200, { type: "client", node: "c2", command: { type: "get", key: "x" } }),
+    net(400, {
+      type: "partition",
+      groups: [
+        ["A", "c2"],
+        ["B", "C", "D", "E", "c1"],
+      ],
+    }),
+    at(450, { type: "client", node: "c1", command: { type: "put", key: "x", value: "2" } }),
+    at(900, { type: "client", node: "c2", command: { type: "get", key: "x" } }),
+    net(3000, { type: "heal" }),
+  ];
+  return {
+    version: SCENARIO_VERSION,
+    protocol,
+    seed: 3,
+    nodes: ["A", "B", "C", "D", "E"],
+    clients: ["c1", "c2"],
+    config: config as CanonicalValue,
+    clockRates: { A: leaderClockRate },
+    network: { defaults: { latencyMs: 10, jitterMs: 0, loss: 0, duplicate: 0 } },
+    actions,
+    durationMs: 5000,
+  };
+}

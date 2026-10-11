@@ -54,7 +54,8 @@ export function raft(
     config.heartbeatIntervalMs >= config.electionTimeoutMinMs ||
     !Number.isSafeInteger(config.maxEntriesPerAppend) ||
     config.maxEntriesPerAppend < 1 ||
-    !["log", "readIndex", "lease"].includes(config.readMode)
+    !["log", "readIndex", "lease"].includes(config.readMode) ||
+    !(config.maxDriftPpm >= 0 && config.maxDriftPpm < 1_000_000)
   ) {
     throw new RangeError(`invalid Raft config: ${JSON.stringify(config)}`);
   }
@@ -78,11 +79,24 @@ export function raft(
       round: 0,
       ackedRound: {},
       pendingReads: [],
+      roundSentAt: {},
+      leaseUntil: null,
+      lastLeaderContact: null,
     };
   }
 
   /** Rounds are carried only when reads are served outside the log. */
   const rounds = config.readMode !== "log";
+  const leases = config.readMode === "lease";
+  /**
+   * Lease length in the leader's local time. A voter that answered a round ignores
+   * RequestVote for electionTimeoutMin of its own time after receiving it: at least
+   * min / (1 + e) true ms. The leader's lease, measured from sending that round on a clock
+   * at least (1 - e) fast, lasts at most leaseMs / (1 - e) true ms, so it must be at most
+   * min * (1 - e) / (1 + e) local ms.
+   */
+  const drift = config.maxDriftPpm / 1_000_000;
+  const leaseMs = (config.electionTimeoutMinMs * (1 - drift)) / (1 + drift);
 
   function resetElectionTimer(ctx: Ctx): void {
     ctx.setTimer(
@@ -100,6 +114,16 @@ export function raft(
     s.volatile.pendingReads = [];
     s.volatile.round = 0;
     s.volatile.ackedRound = {};
+    s.volatile.roundSentAt = {};
+    s.volatile.leaseUntil = null;
+  }
+
+  /** Lease mode: may this server consider a candidate's RequestVote yet? */
+  function mayVote(ctx: Ctx, s: State): boolean {
+    const contact = s.volatile.lastLeaderContact;
+    if (!leases || contact === null) return true;
+    if (s.volatile.role === "leader") return false;
+    return ctx.localNow - contact >= config.electionTimeoutMinMs;
   }
 
   // ---------------------------------------------------------------------------------------
@@ -213,6 +237,10 @@ export function raft(
   /** Sends to every follower (doubles as the heartbeat) and re-arms the heartbeat timer. */
   function broadcastAppend(ctx: Ctx, s: State): void {
     if (rounds) s.volatile.round++;
+    if (leases) {
+      s.volatile.roundSentAt[s.volatile.round] = ctx.localNow;
+      s.volatile.lastLeaderContact = ctx.localNow;
+    }
     for (const p of ctx.peers) sendAppend(ctx, s, p);
     ctx.setTimer(HEARTBEAT_TIMER, config.heartbeatIntervalMs);
   }
@@ -238,6 +266,7 @@ export function raft(
     // m.term === currentTerm (observeTerm ran first): m.leaderId leads this term.
     becomeFollower(s);
     v.leaderId = m.leaderId;
+    if (leases) v.lastLeaderContact = ctx.localNow;
     resetElectionTimer(ctx);
 
     // Consistency check: our log must contain an entry at prevLogIndex with prevLogTerm.
@@ -294,6 +323,7 @@ export function raft(
     // Any answer in our term, accepted or not, shows the follower still recognizes us.
     if (m.round !== undefined && m.round > (v.ackedRound[from] ?? 0)) {
       v.ackedRound[from] = m.round;
+      if (leases) extendLease(ctx, s);
       serveReads(ctx, s);
     }
     const match = v.matchIndex[from] ?? 0;
@@ -359,6 +389,27 @@ export function raft(
   const committedInTerm = (s: State) =>
     termAt(s, s.volatile.commitIndex) === s.persistent.currentTerm;
 
+  /** Highest round a majority (this leader included) has answered. */
+  function confirmedRound(ctx: Ctx, s: State): number {
+    const v = s.volatile;
+    const acked = [v.round, ...ctx.peers.map((p) => v.ackedRound[p] ?? 0)].sort((a, b) => b - a);
+    return acked[majority(ctx) - 1]!;
+  }
+
+  /** A majority answered a round: the lease runs from when that round was sent. */
+  function extendLease(ctx: Ctx, s: State): void {
+    const v = s.volatile;
+    const round = confirmedRound(ctx, s);
+    const sentAt = v.roundSentAt[round];
+    if (sentAt !== undefined) v.leaseUntil = Math.max(v.leaseUntil ?? 0, sentAt + leaseMs);
+    v.roundSentAt = Object.fromEntries(
+      Object.entries(v.roundSentAt).filter(([r]) => Number(r) > round),
+    );
+  }
+
+  const leaseValid = (ctx: Ctx, s: State) =>
+    leases && s.volatile.leaseUntil !== null && ctx.localNow < s.volatile.leaseUntil;
+
   /** Accepts a read: fixes its read index now if possible, else parks it until then. */
   function acceptRead(ctx: Ctx, s: State, m: ClientRequest<KvOp>): void {
     s.volatile.pendingReads.push({
@@ -380,10 +431,12 @@ export function raft(
     const v = s.volatile;
     const parked = v.pendingReads.filter((r) => r.readIndex === null);
     if (parked.length === 0 || !committedInTerm(s)) return;
-    broadcastAppend(ctx, s);
+    // With a valid lease no other leader can have committed anything: no round needed.
+    const lease = leaseValid(ctx, s);
+    if (!lease) broadcastAppend(ctx, s);
     for (const r of parked) {
       r.readIndex = v.commitIndex;
-      r.round = v.round;
+      r.round = lease ? null : v.round;
     }
     serveReads(ctx, s); // a single-node cluster needs no round
   }
@@ -392,12 +445,28 @@ export function raft(
   function serveReads(ctx: Ctx, s: State): void {
     const v = s.volatile;
     if (v.role !== "leader" || v.pendingReads.length === 0) return;
+    const lease = leaseValid(ctx, s);
+    const confirmed = confirmedRound(ctx, s);
+    let renewing = false;
     v.pendingReads = v.pendingReads.filter((r) => {
-      if (r.readIndex === null || r.round === null || v.lastApplied < r.readIndex) return true;
-      const round = r.round;
-      const confirmed = 1 + ctx.peers.filter((p) => (v.ackedRound[p] ?? 0) >= round).length;
-      if (confirmed < majority(ctx)) return true;
-      ctx.annotate("readServed", { client: r.clientId, seq: r.seq, readIndex: r.readIndex });
+      if (r.readIndex === null || v.lastApplied < r.readIndex) return true;
+      // A lease read that outlived its lease is served once a round confirms leadership.
+      const byLease = lease && r.round === null;
+      if (!byLease) {
+        if (r.round === null) {
+          // One round serves every read that outlived the lease in this pass.
+          if (!renewing) broadcastAppend(ctx, s);
+          renewing = true;
+          r.round = v.round;
+        }
+        if (confirmed < r.round) return true;
+      }
+      ctx.annotate("readServed", {
+        client: r.clientId,
+        seq: r.seq,
+        readIndex: r.readIndex,
+        ...(leases ? { by: byLease ? "lease" : "round" } : {}),
+      });
       reply(ctx, r.clientId, r.seq, executeKv(v.kv.data, r.op));
       return false;
     });
@@ -481,7 +550,11 @@ export function raft(
       // commitIndex and the state machine are volatile: they are rebuilt by re-applying the
       // log once a leader tells us what is committed.
       resetElectionTimer(ctx);
-      return { persistent, volatile: freshVolatile() };
+      const volatile = freshVolatile();
+      // We may have answered a leader's round just before crashing, and no longer know when:
+      // wait out a full election timeout before voting, as if we had heard from it now.
+      if (leases) volatile.lastLeaderContact = ctx.localNow;
+      return { persistent, volatile };
     },
 
     onTimer(ctx, s, key) {
@@ -495,6 +568,16 @@ export function raft(
         return;
       }
       if (m.type === "ClientReply") return;
+      // Lease mode: a server that heard from a leader recently ignores candidates entirely,
+      // including their term; the leader's lease counts on it.
+      if (m.type === "RequestVote" && !mayVote(ctx, s)) {
+        ctx.send(from, {
+          type: "RequestVoteResponse",
+          term: s.persistent.currentTerm,
+          voteGranted: false,
+        });
+        return;
+      }
       observeTerm(ctx, s, m.term);
       switch (m.type) {
         case "RequestVote":
@@ -530,6 +613,7 @@ export function raft(
           Object.entries(s.volatile.kv.sessions).map(([client, session]) => [client, session.seq]),
         ),
         pendingReads: s.volatile.pendingReads.length,
+        leaseUntil: s.volatile.leaseUntil,
       };
     },
   };

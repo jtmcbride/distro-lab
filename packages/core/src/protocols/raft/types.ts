@@ -18,9 +18,15 @@ export interface RaftConfig {
   /**
    * How `get`s are served. `log`: as log entries, like writes. `readIndex`: the leader
    * confirms it still leads with a heartbeat round, waits to apply up to the commit index it
-   * saw, then answers from its state machine (no log entry). `lease`: see `leaseMs`.
+   * saw, then answers from its state machine (no log entry). `lease`: while the leader holds
+   * a lease it answers the same way without the round; otherwise it falls back to ReadIndex.
    */
   readonly readMode: ReadMode;
+  /**
+   * Lease mode's assumption: every clock runs within this many parts per million of true
+   * time. Leases are shortened to stay safe under it; drift beyond it can break them.
+   */
+  readonly maxDriftPpm: number;
 }
 
 export type ReadMode = "log" | "readIndex" | "lease";
@@ -32,6 +38,7 @@ export const DEFAULT_RAFT_CONFIG: RaftConfig = {
   maxEntriesPerAppend: 64,
   fastBackoff: true,
   readMode: "log",
+  maxDriftPpm: 50_000,
 };
 
 export type RaftCommand =
@@ -81,6 +88,15 @@ export interface RaftVolatile {
   ackedRound: Record<NodeId, number>;
   /** Leaders only: reads waiting to be served without a log entry. */
   pendingReads: PendingRead[];
+  /** Leaders only (lease): local send time of each round not yet confirmed by a majority. */
+  roundSentAt: Record<number, number>;
+  /** Leaders only (lease): local time until which no other leader can exist. */
+  leaseUntil: number | null;
+  /**
+   * Lease mode: local time this server last heard from a leader (or led, or restarted). It
+   * ignores RequestVote until the minimum election timeout has passed since then.
+   */
+  lastLeaderContact: number | null;
 }
 
 /** A read the leader will answer once it has confirmed leadership and applied enough. */
@@ -164,4 +180,6 @@ export type RaftView = {
   readonly sessions: Readonly<Record<NodeId, number>>;
   /** Leaders: reads waiting to be served outside the log. */
   readonly pendingReads: number;
+  /** Leaders in lease mode: local clock time the lease runs until, if any. */
+  readonly leaseUntil: number | null;
 };

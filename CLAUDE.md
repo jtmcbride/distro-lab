@@ -95,10 +95,12 @@ Bottom up:
 - **Causality** (`causality.ts`): happens-before past of a record, plus faults that matter by
   omission (the crash or link cut that dropped a message in the past).
 - **Raft** (`protocols/raft/`): `raft.ts` (election, replication, no-op on election,
-  current-term commit, KV apply with a session table), `kv.ts` (also the linearizability model),
-  `invariants.ts`, `workload.ts` (KV client ops and the `client-chains` check), `scenarios.ts`
-  (scripted Figure 8; a stale read from a deposed leader), `registry.ts` (`raft` plus a
-  `raft-bug-<name>` entry per planted bug).
+  current-term commit, KV apply with a session table; reads by `readMode`: through the log,
+  ReadIndex, or leader leases that assume `maxDriftPpm` and make followers ignore candidates
+  while they hear from a leader), `kv.ts` (also the linearizability model), `invariants.ts`,
+  `workload.ts` (KV client ops and the `client-chains` check), `scenarios.ts` (scripted
+  Figure 8; a stale read from a deposed leader; a lease outliving its leader), `registry.ts`
+  (`raft` plus a `raft-bug-<name>` entry per planted bug).
 - **Dynamo** (`protocols/dynamo/`): leaderless store. `ring.ts` (preference lists from server
   ids, not the seed), `clock.ts` (dotted versions with exact causal contexts: a version vector
   plus individual dots; plain vector clocks or vector contexts are wrong here and kept only as
