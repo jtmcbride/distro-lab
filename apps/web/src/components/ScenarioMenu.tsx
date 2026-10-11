@@ -4,6 +4,7 @@ import { registry, SCENARIO_CHOICES } from "../scenarios.ts";
 import { decodeScenario, downloadJson, encodeScenario, HASH_PREFIX } from "../share.ts";
 import { sim } from "../sim/client.ts";
 import { useSim } from "../state/store.ts";
+import { startTour } from "../tutorials/control.ts";
 import { scenarioForSeed } from "@distro-lab/core";
 
 /** Load examples, generate from a seed, import/export JSON, and share links. */
@@ -31,7 +32,11 @@ export function ScenarioMenu() {
           load(SCENARIO_CHOICES[0]!.make(), SCENARIO_CHOICES[0]!.label);
         });
     } else {
-      load(SCENARIO_CHOICES[0]!.make(), SCENARIO_CHOICES[0]!.label);
+      // ?tour=<id> opens a tutorial (links from the docs).
+      const tour = new URLSearchParams(window.location.search).get("tour");
+      if (tour === null || !startTour(tour)) {
+        load(SCENARIO_CHOICES[0]!.make(), SCENARIO_CHOICES[0]!.label);
+      }
     }
   }, []);
 

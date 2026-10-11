@@ -56,6 +56,8 @@ export interface SimState {
   readonly selectedRecord: number | null;
   /** Selection to apply when the next reset frame arrives (e.g. after seeking to it). */
   readonly pendingSelection: { record: number; process: string | null } | null;
+  /** Guided tour in progress: its id, current step, and the scenario it loaded. */
+  readonly tour: { id: string; step: number; scenarioName: string } | null;
 }
 
 export const useSim = create<SimState>(() => ({
@@ -84,6 +86,7 @@ export const useSim = create<SimState>(() => ({
   selectedProcess: null,
   selectedRecord: null,
   pendingSelection: null,
+  tour: null,
 }));
 
 /** Folds a worker frame into the store and the shared trace. */

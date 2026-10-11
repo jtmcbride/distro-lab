@@ -136,6 +136,9 @@ behavior lives in core.
   client form, op descriptions. `HistoryPanel` shows client histories and linearizability
   violations for any protocol. Components get it from `useProtocolUi()`. A new protocol needs
   one of these plus entries in `scenarios.ts` (scenario menu).
+- `tutorials/`: guided tours (`tours.ts`: steps with a moment, a panel and text) and their
+  controls. `tours.test.ts` checks every claim a step makes against a fresh run, so a
+  protocol or example change that makes a tour wrong fails the build; `?tour=<id>` opens one.
 - Unit tests are `src/**/*.test.ts` (vitest); Playwright specs are in `e2e/`.
 
 ## Conventions

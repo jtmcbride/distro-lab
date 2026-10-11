@@ -79,6 +79,12 @@ body {
   gap: 12px;
 }
 
+.topbar .title {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
 .topbar h1 {
   font-size: 1.15rem;
   margin: 0;
@@ -1326,4 +1332,74 @@ table.replica-grid {
 .history-detail {
   margin: 8px 0 0;
   font-size: 0.8rem;
+}
+
+.panel.tour-focus {
+  outline: 3px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.tour-menu .popover-body {
+  left: 0;
+  right: auto;
+  width: min(340px, calc(100vw - 32px));
+}
+
+.tour-choice {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  text-align: left;
+  font-size: 0.85rem;
+}
+
+.tour-card {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 20;
+  width: min(400px, calc(100vw - 32px));
+  max-height: min(60vh, 520px);
+  overflow-y: auto;
+  padding: 12px 14px;
+  background: var(--panel);
+  border: 1px solid var(--accent);
+  border-radius: 10px;
+  box-shadow: 0 10px 30px rgb(0 0 0 / 0.2);
+  font-size: 0.88rem;
+  line-height: 1.45;
+}
+
+.tour-card header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.tour-card h3 {
+  margin: 4px 0 6px;
+  font-size: 1rem;
+}
+
+.tour-card p {
+  margin: 0 0 8px;
+}
+
+.tour-card footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+@media (max-width: 800px) {
+  .tour-card {
+    max-height: 45vh;
+  }
+}
+
+/* Room to scroll the last panels out from under the tour card. */
+.app:has(.tour-card) {
+  padding-bottom: 50vh;
 }

@@ -1,7 +1,15 @@
 # distro-lab
 
-Deterministic distributed-systems simulator. See [PLAN.md](PLAN.md) for the roadmap and
-[docs/semantics.md](docs/semantics.md) for exactly what the simulator models.
+Deterministic distributed-systems simulator. See [PLAN.md](PLAN.md) for the roadmap,
+[docs/semantics.md](docs/semantics.md) for exactly what the simulator models, and
+[docs/linearizability.md](docs/linearizability.md) for how client histories are checked.
+
+**[Try it in the browser](https://jtmcbride.github.io/distro-lab/)**, starting with a guided
+tutorial: [leader election](https://jtmcbride.github.io/distro-lab/?tour=election),
+[Figure 8](https://jtmcbride.github.io/distro-lab/?tour=figure8),
+[stale reads](https://jtmcbride.github.io/distro-lab/?tour=stale-read),
+[Dynamo siblings](https://jtmcbride.github.io/distro-lab/?tour=siblings), or
+[sloppy quorums](https://jtmcbride.github.io/distro-lab/?tour=sloppy-quorum).
 
 ```sh
 pnpm install
@@ -12,7 +20,8 @@ pnpm check   # format, lint, typecheck, test
 
 - `packages/core`: simulation engine, network model, protocols, invariants, chaos harness,
   time travel. No DOM or Node dependencies. Two protocols, each with planted-bug variants:
-  - Raft with a replicated KV store (linearizable, exactly-once).
+  - Raft with a replicated KV store (linearizable, exactly-once), checked online for
+    linearizability against every client-visible history.
   - A Dynamo-style leaderless store: consistent hashing, N/R/W quorums, sloppy quorums with
     hinted handoff, read repair, anti-entropy, dotted version vectors with siblings, and CRDT
     values (counters on `count:` keys, observed-remove sets on `set:` keys).
@@ -21,7 +30,8 @@ pnpm check   # format, lint, typecheck, test
   timeline, node inspector, Raft's log grid and Dynamo's replica grid, causal event list,
   fault and client tools, share links; time travel with step back and live scrubbing,
   what-if branches with a schedule editor and comparison, in-browser minimization, causal
-  explanations of violations).
+  explanations of violations, a client history panel that marks linearizability
+  violations, and guided tutorials over the examples).
   `pnpm -C apps/web dev` to develop; `pnpm -C apps/web e2e` runs the Playwright suite.
   Deployed to GitHub Pages from `main`.
 
